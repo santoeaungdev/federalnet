@@ -544,12 +544,13 @@ DROP TABLE IF EXISTS `tbl_customers`;
 CREATE TABLE `tbl_customers` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `username` varchar(45) NOT NULL,
-  `password` varchar(45) NOT NULL,
+  `password` varchar(128) NOT NULL,
   `photo` varchar(128) NOT NULL DEFAULT '/user.default.jpg',
   `pppoe_username` varchar(32) NOT NULL DEFAULT '' COMMENT 'For PPPOE Login',
   `pppoe_password` varchar(45) NOT NULL DEFAULT '' COMMENT 'For PPPOE Login',
   `pppoe_ip` varchar(32) NOT NULL DEFAULT '' COMMENT 'For PPPOE Login',
   `fullname` varchar(45) NOT NULL,
+  `nrc_no` varchar(45) DEFAULT NULL,
   `address` mediumtext DEFAULT NULL,
   `city` varchar(255) DEFAULT NULL,
   `district` varchar(255) DEFAULT NULL,
@@ -576,8 +577,8 @@ CREATE TABLE `tbl_customers` (
 
 LOCK TABLES `tbl_customers` WRITE;
 /*!40000 ALTER TABLE `tbl_customers` DISABLE KEYS */;
-INSERT INTO `tbl_customers` VALUES
-(1,'testuser','11115555','/user.default.jpg','','','','testuser','','','','','','','zawminaung@gmail.com','','Personal',2500.00,'PPPoE',1,'Active',1,'2025-12-05 04:06:11',NULL);
+INSERT INTO `tbl_customers` (`id`,`username`,`password`,`photo`,`pppoe_username`,`pppoe_password`,`pppoe_ip`,`fullname`,`nrc_no`,`address`,`city`,`district`,`state`,`zip`,`phonenumber`,`email`,`coordinates`,`account_type`,`balance`,`service_type`,`auto_renewal`,`status`,`created_by`,`created_at`,`last_login`) VALUES
+(1,'testuser','11115555','/user.default.jpg','','','','testuser','',NULL,NULL,NULL,NULL,NULL,NULL,'zawminaung@gmail.com','','Personal',2500.00,'PPPoE',1,'Active',1,'2025-12-05 04:06:11',NULL);
 /*!40000 ALTER TABLE `tbl_customers` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1198,3 +1199,109 @@ UNLOCK TABLES;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
 -- Dump completed on 2025-12-06  3:16:38
+
+-- # get me those 5 tables creation sql
+
+-- Here are MySQL/MariaDB `CREATE TABLE` statements for the 5 tables, matching your existing style (InnoDB, utf8mb4).
+
+-- ## 1. `owner_gateways`
+
+-- ```sql
+CREATE TABLE `owner_gateways` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `owner_id` INT(10) UNSIGNED NOT NULL,  -- tbl_users.id (owner role)
+  `nas_id` INT(10) NOT NULL,             -- nas.id
+  `bound_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `unbound_at` DATETIME DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_owner_nas` (`owner_id`, `nas_id`),
+  KEY `idx_owner` (`owner_id`),
+  KEY `idx_nas` (`nas_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+-- ```
+
+
+-- ## 2. `customer_wallet_ledger`
+
+-- ```sql
+CREATE TABLE `customer_wallet_ledger` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `customer_id` INT(11) NOT NULL,        -- tbl_customers.id
+  `owner_id` INT(10) UNSIGNED NOT NULL,  -- tbl_users.id (owner)
+  `ref_type` ENUM('voucher','topup','plan_purchase','refund','adjustment') NOT NULL,
+  `ref_id` BIGINT UNSIGNED DEFAULT NULL, -- e.g. tbl_voucher.id, tbl_transactions.id
+  `amount_mmk` DECIMAL(15,2) NOT NULL,   -- +credit to customer, -debit
+  `description` VARCHAR(255) NOT NULL DEFAULT '',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_customer` (`customer_id`),
+  KEY `idx_owner` (`owner_id`),
+  KEY `idx_ref` (`ref_type`, `ref_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+-- ```
+
+
+-- ## 3. `owner_revenue_ledger`
+
+-- ```sql
+CREATE TABLE `owner_revenue_ledger` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `owner_id` INT(10) UNSIGNED NOT NULL,      -- tbl_users.id
+  `period_month` CHAR(7) NOT NULL,           -- 'YYYY-MM'
+  `source_type` ENUM('plan_sale','extra_fee','refund_adjustment') NOT NULL,
+  `source_id` BIGINT UNSIGNED DEFAULT NULL,  -- e.g. tbl_transactions.id
+  `gross_amount` DECIMAL(15,2) NOT NULL,
+  `platform_tax_pct` DECIMAL(5,2) NOT NULL,
+  `platform_tax_amount` DECIMAL(15,2) NOT NULL,
+  `net_owner_amount` DECIMAL(15,2) NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_owner_period` (`owner_id`, `period_month`),
+  KEY `idx_source` (`source_type`, `source_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+-- ```
+
+
+-- ## 4. `owner_settlements`
+
+-- ```sql
+CREATE TABLE `owner_settlements` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `owner_id` INT(10) UNSIGNED NOT NULL,   -- tbl_users.id
+  `period_month` CHAR(7) NOT NULL,        -- 'YYYY-MM'
+  `statement_from` DATE NOT NULL,
+  `statement_to` DATE NOT NULL,
+  `total_gross` DECIMAL(15,2) NOT NULL,
+  `total_tax` DECIMAL(15,2) NOT NULL,
+  `total_net_due` DECIMAL(15,2) NOT NULL,
+  `paid_amount` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+  `payment_method` VARCHAR(32) NOT NULL DEFAULT '',  -- cash/NUGPay/bank
+  `payment_ref` VARCHAR(64) NOT NULL DEFAULT '',     -- slip/txn id
+  `status` ENUM('pending','partial','paid','disputed') NOT NULL DEFAULT 'pending',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `settled_at` DATETIME DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_owner_period` (`owner_id`, `period_month`),
+  KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+-- ```
+
+
+-- ## 5. `owner_cash_ledger` (optional but recommended)
+
+-- ```sql
+CREATE TABLE `owner_cash_ledger` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `owner_id` INT(10) UNSIGNED NOT NULL,  -- tbl_users.id
+  `ref_type` ENUM('revenue','tax','settlement','manual_adjustment') NOT NULL,
+  `ref_id` BIGINT UNSIGNED DEFAULT NULL, -- owner_revenue_ledger.id or owner_settlements.id
+  `amount_mmk` DECIMAL(15,2) NOT NULL,   -- + you owe owner, - owner owes you
+  `description` VARCHAR(255) NOT NULL DEFAULT '',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_owner` (`owner_id`),
+  KEY `idx_ref` (`ref_type`, `ref_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+
+
