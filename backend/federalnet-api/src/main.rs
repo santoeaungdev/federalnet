@@ -7,7 +7,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use sha1::Sha1;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use models::{Customer, CustomerClaims, CustomerLoginRequest, CustomerLoginResponse, CustomerPublic, CustomerRegisterRequest,
-AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem};
+AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, NrcRow};
 use serde::Deserialize;
 use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
 use std::env;
@@ -35,6 +35,9 @@ async fn main() -> std::io::Result<()> {
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let enable_seed = env::var("ENABLE_SEED_ENDPOINTS")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
 
     let pool = MySqlPoolOptions::new()
         .max_connections(10)
@@ -48,24 +51,28 @@ async fn main() -> std::io::Result<()> {
     };
 
     HttpServer::new(move || {
+        let mut scoped = web::scope("/api")
+            .route("/health", web::get().to(health))
+            .route("/admin/login", web::post().to(admin_login))
+            .route("/customer/login", web::post().to(customer_login))
+            .route("/customers/me", web::get().to(customers_me))
+            .route("/customer/register", web::post().to(customer_register))
+            .route("/admin/nrcs", web::get().to(admin_list_nrcs))
+            .route("/admin/customer/register", web::post().to(admin_customer_register))
+            .route("/admin/assign_plan", web::post().to(admin_assign_plan))
+            .route("/admin/customers", web::get().to(admin_list_customers));
+
+        if enable_seed {
+            scoped = scoped
+                .route("/_seed_test_data", web::post().to(seed_test_data))
+                .route("/_seed_more_customers", web::post().to(seed_more_customers));
+        }
+
         App::new()
             .wrap(Logger::default())
             .wrap(Cors::permissive())
             .app_data(web::Data::new(state.clone()))
-            .service(
-                web::scope("/api")
-                    .route("/health", web::get().to(health))
-                    .route("/admin/login", web::post().to(admin_login))
-                    .route("/customer/login", web::post().to(customer_login))
-                    .route("/customers/me", web::get().to(customers_me))
-                    .route("/customer/register", web::post().to(customer_register))
-                    .route("/admin/customer/register", web::post().to(admin_customer_register))
-                        .route("/_seed_test_data", web::post().to(seed_test_data))
-                        .route("/_seed_more_customers", web::post().to(seed_more_customers))
-                        .route("/admin/assign_plan", web::post().to(admin_assign_plan))
-                        .route("/admin/customers", web::get().to(admin_list_customers))
-
-            )
+            .service(scoped)
     })
         .bind(("0.0.0.0", 8080))?
         .run()
@@ -403,6 +410,23 @@ fn extract_admin_claims(req: &HttpRequest, secret: &str) -> Result<models::Admin
     .map_err(|_| actix_web::error::ErrorUnauthorized("invalid_token"))?;
 
     Ok(data.claims)
+}
+
+// Admin-only: fetch NRC township codes from `nrcs` table for dropdowns.
+async fn admin_list_nrcs(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+
+    let rows = sqlx::query_as::<_, NrcRow>(
+        "SELECT id, name_en, name_mm, nrc_code FROM nrcs ORDER BY nrc_code, name_en",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    Ok(HttpResponse::Ok().json(rows))
 }
 
 // Admin-only: create a customer (called from admin app). Validates NRC presence and inserts into radcheck.

@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'config.dart';
 
 class RegisterCustomerPage extends StatefulWidget {
   const RegisterCustomerPage({super.key});
@@ -15,18 +17,144 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
   final _password = TextEditingController();
   final _fullname = TextEditingController();
   final _nrc = TextEditingController();
+  final _nrcNumber = TextEditingController();
   final _phone = TextEditingController();
   final _email = TextEditingController();
   final _pppoeUser = TextEditingController();
   final _pppoePass = TextEditingController();
   final _storage = const FlutterSecureStorage();
+  final List<String> _citizenTypes = ['N', 'E', 'P'];
+
+  List<_NrcOption> _nrcOptions = [];
+  List<_NrcOption> _filteredTownships = [];
+  int? _selectedStateCode;
+  _NrcOption? _selectedTownship;
+  String _selectedCitizen = 'N';
   bool _loading = false;
+  bool _loadingNrc = false;
+  String? _nrcLoadError;
+
+  static const Map<int, String> _stateLabels = {
+    1: 'Kachin',
+    2: 'Kayah',
+    3: 'Kayin',
+    4: 'Chin',
+    5: 'Sagaing',
+    6: 'Tanintharyi',
+    7: 'Bago',
+    8: 'Magway',
+    9: 'Mandalay',
+    10: 'Mon',
+    11: 'Rakhine',
+    12: 'Yangon',
+    13: 'Shan',
+    14: 'Ayeyarwady',
+    15: 'Nay Pyi Taw',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNrcOptions();
+  }
+
+  @override
+  void dispose() {
+    _username.dispose();
+    _password.dispose();
+    _fullname.dispose();
+    _nrc.dispose();
+    _nrcNumber.dispose();
+    _phone.dispose();
+    _email.dispose();
+    _pppoeUser.dispose();
+    _pppoePass.dispose();
+    super.dispose();
+  }
+
+  List<int> get _stateCodes {
+    final codes = _nrcOptions.map((e) => e.nrcCode).toSet().toList();
+    codes.sort();
+    return codes;
+  }
+
+  Future<void> _loadNrcOptions() async {
+    setState(() {
+      _loadingNrc = true;
+      _nrcLoadError = null;
+    });
+
+    final token = await _storage.read(key: 'jwt');
+    final dio = Dio(BaseOptions(
+      baseUrl: apiBaseUrl,
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+      headers: token != null ? {'Authorization': 'Bearer $token'} : {},
+    ));
+
+    try {
+      final resp = await dio.get('/admin/nrcs');
+      final raw = resp.data as List<dynamic>;
+      final items = raw
+          .map((e) =>
+            _NrcOption.fromJson(Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
+          .toList();
+
+      setState(() {
+        _nrcOptions = items;
+        _selectedStateCode ??= _stateCodes.isNotEmpty ? _stateCodes.first : null;
+        _filteredTownships = _nrcOptions
+            .where((o) => o.nrcCode == _selectedStateCode)
+            .toList();
+        _selectedTownship = _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
+      });
+      _refreshNrcPreview();
+    } catch (e) {
+      setState(() => _nrcLoadError = 'Failed to load NRC list: $e');
+    } finally {
+      if (mounted) setState(() => _loadingNrc = false);
+    }
+  }
+
+  void _onStateChanged(int? code) {
+    setState(() {
+      _selectedStateCode = code;
+      _filteredTownships = _nrcOptions
+          .where((o) => o.nrcCode == _selectedStateCode)
+          .toList();
+      _selectedTownship = _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
+    });
+    _refreshNrcPreview();
+  }
+
+  void _refreshNrcPreview() {
+    _nrc.text = _composeNrc() ?? '';
+  }
+
+  String? _composeNrc() {
+    if (_selectedTownship == null) return null;
+    final digits = _nrcNumber.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length != 6) return null;
+    return '${_selectedTownship!.nrcCode}/${_selectedTownship!.nameEn}(${_selectedCitizen})$digits';
+  }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final composedNrc = _composeNrc();
+    if (composedNrc == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Please complete NRC details (state, township, type, 6-digit no).')));
+      return;
+    }
+
+    _nrc.text = composedNrc;
     setState(() => _loading = true);
     final token = await _storage.read(key: 'jwt');
-    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:8080/api'));
+    final dio = Dio(BaseOptions(
+      baseUrl: apiBaseUrl,
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+    ));
     try {
       final headers = <String, String>{};
       if (token != null) headers['Authorization'] = 'Bearer $token';
@@ -41,6 +169,7 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
             'service_type': 'PPPoE',
             'pppoe_username': _pppoeUser.text,
             'pppoe_password': _pppoePass.text,
+            'router_tag': '',
           },
           options: Options(headers: headers));
 
@@ -85,11 +214,114 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
                 controller: _fullname,
                 decoration: const InputDecoration(labelText: 'Full name'),
               ),
+              const SizedBox(height: 12),
+              if (_loadingNrc) const LinearProgressIndicator(),
+              if (_nrcLoadError != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        _nrcLoadError!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: _loadNrcOptions,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry loading NRC list'),
+                    ),
+                  ],
+                ),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<int>(
+                      value: _selectedStateCode,
+                      decoration: const InputDecoration(labelText: 'nrc_code'),
+                      items: _stateCodes
+                          .map((code) => DropdownMenuItem(
+                                value: code,
+                                child: Text('$code - ${_stateLabels[code] ?? 'Code $code'}'),
+                              ))
+                          .toList(),
+                      onChanged: _loadingNrc ? null : _onStateChanged,
+                      validator: (v) => v == null ? 'Select state/region' : null,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 3,
+                    child: DropdownButtonFormField<_NrcOption>(
+                      value: _selectedTownship,
+                      decoration: const InputDecoration(labelText: 'name_en'),
+                      items: _filteredTownships
+                          .map((o) => DropdownMenuItem(
+                                value: o,
+                                child: Text('${o.nrcCode}/${o.nameEn} (${o.nameMm})'),
+                              ))
+                          .toList(),
+                      onChanged: _loadingNrc
+                          ? null
+                          : (opt) {
+                              setState(() => _selectedTownship = opt);
+                              _refreshNrcPreview();
+                            },
+                      validator: (v) => v == null ? 'Select township' : null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedCitizen,
+                      decoration: const InputDecoration(labelText: 'numbertype'),
+                      items: _citizenTypes
+                          .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                          .toList(),
+                      onChanged: (val) {
+                        setState(() => _selectedCitizen = val ?? 'N');
+                        _refreshNrcPreview();
+                      },
+                      validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 3,
+                    child: TextFormField(
+                      controller: _nrcNumber,
+                      decoration: const InputDecoration(labelText: '000000'),
+                      maxLength: 6,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      onChanged: (_) => _refreshNrcPreview(),
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Required';
+                        final digits = v.replaceAll(RegExp(r'[^0-9]'), '');
+                        if (digits.length != 6) return 'Enter 6 digits';
+                        return null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              const Text('Example: 5/WaThaNa(N)000111'),
+              const SizedBox(height: 8),
               TextFormField(
                 controller: _nrc,
-                decoration: const InputDecoration(labelText: 'NRC (mandatory)'),
+                readOnly: true,
+                decoration: const InputDecoration(labelText: 'NRC (formatted)'),
                 validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
               ),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: _phone,
                 decoration: const InputDecoration(labelText: 'Phone'),
@@ -116,6 +348,29 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _NrcOption {
+  final int id;
+  final int nrcCode;
+  final String nameEn;
+  final String nameMm;
+
+  _NrcOption({
+    required this.id,
+    required this.nrcCode,
+    required this.nameEn,
+    required this.nameMm,
+  });
+
+  factory _NrcOption.fromJson(Map<String, dynamic> json) {
+    return _NrcOption(
+      id: json['id'] as int,
+      nrcCode: json['nrc_code'] as int,
+      nameEn: json['name_en'] as String,
+      nameMm: json['name_mm'] as String,
     );
   }
 }

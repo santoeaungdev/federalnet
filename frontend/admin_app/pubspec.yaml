@@ -8,7 +8,9 @@ dependencies:
   flutter:
     sdk: flutter
   dio: ^5.0.0
-  flutter_secure_storage: ^8.0.0
+  flutter_secure_storage: ^9.2.4
 
 flutter:
   uses-material-design: true
+
+dependency_overrides:

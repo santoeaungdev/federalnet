@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'register_customer.dart';
+import 'config.dart';
 
 class LoginPage extends StatefulWidget {
   final String role; // 'admin' or 'owner'
@@ -21,7 +22,11 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
-    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:8080/api'));
+    final dio = Dio(BaseOptions(
+      baseUrl: apiBaseUrl,
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+    ));
     try {
       final resp = await dio.post('/${widget.role}/login', data: {
         'username': _usernameCtl.text,

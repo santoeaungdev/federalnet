@@ -127,3 +127,11 @@ pub struct CustomerRegisterRequest {
     pub pppoe_password: String,
     pub router_tag: String,    // optional: maps to routers/groupname
 }
+
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct NrcRow {
+    pub id: i32,
+    pub name_en: String,
+    pub name_mm: String,
+    pub nrc_code: i32,
+}
