@@ -1,0 +1,22 @@
+# Rust
+/backend/federalnet-api/target/
+/backend/federalnet-api/Cargo.lock
+
+# Flutter / Dart
+.dart_tool/
+build/
+.packages
+pubspec.lock
+
+# Node / general
+node_modules/
+.env
+.DS_Store
+.vscode/
+.idea/
+*.iml
+*.log
+
+# OS
+Thumbs.db
+desktop.ini
