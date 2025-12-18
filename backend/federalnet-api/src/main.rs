@@ -7,7 +7,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use sha1::Sha1;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use models::{Customer, CustomerClaims, CustomerLoginRequest, CustomerLoginResponse, CustomerPublic, CustomerRegisterRequest,
-AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, NrcRow};
+CustomerUpdateRequest, AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, AdminCustomerDetail, NrcRow};
 use serde::Deserialize;
 use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
 use std::env;
@@ -59,8 +59,10 @@ async fn main() -> std::io::Result<()> {
             .route("/customer/register", web::post().to(customer_register))
             .route("/admin/nrcs", web::get().to(admin_list_nrcs))
             .route("/admin/customer/register", web::post().to(admin_customer_register))
+            .route("/admin/customer/update", web::post().to(admin_customer_update))
             .route("/admin/assign_plan", web::post().to(admin_assign_plan))
-            .route("/admin/customers", web::get().to(admin_list_customers));
+            .route("/admin/customers", web::get().to(admin_list_customers))
+            .route("/admin/customers/{id}", web::get().to(admin_get_customer));
 
         if enable_seed {
             scoped = scoped
@@ -654,4 +656,160 @@ async fn admin_list_customers(
     .map_err(actix_web::error::ErrorInternalServerError)?;
 
     Ok(HttpResponse::Ok().json(rows))
+}
+
+// Admin-only: fetch a single customer with PPPoE and NRC details
+async fn admin_get_customer(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<(i32,)>,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    let customer_id = path.into_inner().0;
+
+    let row = sqlx::query_as::<_, AdminCustomerDetail>(
+        r#"
+        SELECT c.id, c.username, c.fullname, c.nrc_no, c.phonenumber, c.email,
+               c.service_type, c.pppoe_username, c.pppoe_password, c.status,
+               (SELECT groupname FROM radusergroup rug WHERE rug.username = c.pppoe_username ORDER BY priority ASC LIMIT 1) AS groupname
+        FROM tbl_customers c
+        WHERE c.id = ? LIMIT 1
+        "#
+    )
+    .bind(customer_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    let detail = match row {
+        Some(r) => r,
+        None => return Ok(HttpResponse::NotFound().json(json!({"error": "not_found"}))),
+    };
+
+    Ok(HttpResponse::Ok().json(detail))
+}
+
+// Admin-only: update a customer and related PPPoE credentials
+async fn admin_customer_update(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    payload: web::Json<CustomerUpdateRequest>,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    let data = payload.into_inner();
+
+    // validate NRC code exists
+    if !nrc_code_exists(&state.db, &data.nrc_no).await? {
+        return Ok(HttpResponse::BadRequest().json(json!({"error": "invalid_nrc"})));
+    }
+
+    // fetch current customer
+    let current = sqlx::query_as::<_, AdminCustomerDetail>(
+        r#"
+        SELECT c.id, c.username, c.fullname, c.nrc_no, c.phonenumber, c.email,
+               c.service_type, c.pppoe_username, c.pppoe_password, c.status,
+               (SELECT groupname FROM radusergroup rug WHERE rug.username = c.pppoe_username ORDER BY priority ASC LIMIT 1) AS groupname
+        FROM tbl_customers c
+        WHERE c.id = ? LIMIT 1
+        "#
+    )
+    .bind(data.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    let current = match current {
+        Some(c) => c,
+        None => return Ok(HttpResponse::NotFound().json(json!({"error": "not_found"}))),
+    };
+
+    // ensure unique username and pppoe_username (excluding current)
+    let uname_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE username = ? AND id <> ?")
+        .bind(&data.username)
+        .bind(data.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    if uname_exists > 0 {
+        return Ok(HttpResponse::BadRequest().json(json!({"error": "username_exists"})));
+    }
+
+    let pppoe_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE pppoe_username = ? AND id <> ?")
+        .bind(&data.pppoe_username)
+        .bind(data.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    if pppoe_exists > 0 {
+        return Ok(HttpResponse::BadRequest().json(json!({"error": "pppoe_username_exists"})));
+    }
+
+    let mut tx = state.db.begin()
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    // update main customer row
+    sqlx::query(
+        r#"
+        UPDATE tbl_customers
+        SET username = ?, password = ?, fullname = ?, nrc_no = ?, phonenumber = ?, email = ?,
+            pppoe_username = ?, pppoe_password = ?, service_type = ?
+        WHERE id = ?
+        "#
+    )
+    .bind(&data.username)
+    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)? )
+    .bind(&data.fullname)
+    .bind(&data.nrc_no)
+    .bind(&data.phonenumber)
+    .bind(&data.email)
+    .bind(&data.pppoe_username)
+    .bind(&data.pppoe_password)
+    .bind(&data.service_type)
+    .bind(data.id)
+    .execute(&mut *tx)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    // update radcheck password, handling username changes
+    sqlx::query("DELETE FROM radcheck WHERE username IN (?, ?)")
+        .bind(&current.pppoe_username)
+        .bind(&data.pppoe_username)
+        .execute(&mut *tx)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    sqlx::query("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)")
+        .bind(&data.pppoe_username)
+        .bind(&data.pppoe_password)
+        .execute(&mut *tx)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    // update radusergroup mapping
+    sqlx::query("DELETE FROM radusergroup WHERE username IN (?, ?)")
+        .bind(&current.pppoe_username)
+        .bind(&data.pppoe_username)
+        .execute(&mut *tx)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    if !data.router_tag.trim().is_empty() {
+        sqlx::query("INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)")
+            .bind(&data.pppoe_username)
+            .bind(&data.router_tag)
+            .execute(&mut *tx)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "id": data.id,
+        "username": data.username,
+        "pppoe_username": data.pppoe_username
+    })))
 }

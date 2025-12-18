@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
 import 'config.dart';
 
 class RegisterCustomerPage extends StatefulWidget {
@@ -95,7 +96,7 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
       final raw = resp.data as List<dynamic>;
       final items = raw
           .map((e) =>
-            _NrcOption.fromJson(Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
+              _NrcOption.fromJson(Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
           .toList();
 
       setState(() {
@@ -104,7 +105,8 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
         _filteredTownships = _nrcOptions
             .where((o) => o.nrcCode == _selectedStateCode)
             .toList();
-        _selectedTownship = _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
+        _selectedTownship =
+            _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
       });
       _refreshNrcPreview();
     } catch (e) {
@@ -117,10 +119,10 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
   void _onStateChanged(int? code) {
     setState(() {
       _selectedStateCode = code;
-      _filteredTownships = _nrcOptions
-          .where((o) => o.nrcCode == _selectedStateCode)
-          .toList();
-      _selectedTownship = _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
+      _filteredTownships =
+          _nrcOptions.where((o) => o.nrcCode == _selectedStateCode).toList();
+      _selectedTownship =
+          _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
     });
     _refreshNrcPreview();
   }
@@ -146,8 +148,8 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
     }
     final composedNrc = _composeNrc();
     if (composedNrc == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Please complete NRC details (state, township, type, 6-digit no).')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Please complete NRC details (state, township, type, 6-digit no).')));
       return;
     }
 

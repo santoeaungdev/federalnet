@@ -10,7 +10,7 @@ class OwnerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'FederalNet Owner',
-      home: LoginPage(role: 'admin'),
+      home: LoginPage(role: 'owner'),
     );
   }
 }

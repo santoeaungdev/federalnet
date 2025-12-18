@@ -128,10 +128,40 @@ pub struct CustomerRegisterRequest {
     pub router_tag: String,    // optional: maps to routers/groupname
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CustomerUpdateRequest {
+    pub id: i32,
+    pub username: String,
+    pub password: String,
+    pub fullname: String,
+    pub nrc_no: String,
+    pub phonenumber: String,
+    pub email: String,
+    pub service_type: String,
+    pub pppoe_username: String,
+    pub pppoe_password: String,
+    pub router_tag: String,
+}
+
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct NrcRow {
     pub id: i32,
     pub name_en: String,
     pub name_mm: String,
     pub nrc_code: i32,
+}
+
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct AdminCustomerDetail {
+    pub id: i32,
+    pub username: String,
+    pub fullname: String,
+    pub nrc_no: String,
+    pub phonenumber: String,
+    pub email: String,
+    pub service_type: String,
+    pub pppoe_username: String,
+    pub pppoe_password: String,
+    pub status: String,
+    pub groupname: Option<String>,
 }
