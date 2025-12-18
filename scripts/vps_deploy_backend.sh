@@ -65,8 +65,14 @@ echo "Installing binary to $INSTALL_DIR/bin"
 mkdir -p "$INSTALL_DIR/bin"
 echo "Stopping service if running to avoid 'Text file busy'..."
 systemctl stop $SERVICE_NAME 2>/dev/null || true
-cp target/release/$BIN_NAME "$INSTALL_DIR/bin/" || { echo "Build output not found; check cargo build"; exit 3; }
-chmod +x "$INSTALL_DIR/bin/$BIN_NAME"
+# Wait for process to fully stop if lingering
+for i in {1..50}; do
+  if pgrep -x "$BIN_NAME" >/dev/null 2>&1; then sleep 0.2; else break; fi
+done
+
+# Copy to a temp file then atomically replace to avoid busy inode
+install -m 0755 "target/release/$BIN_NAME" "$INSTALL_DIR/bin/$BIN_NAME.new" || { echo "Build output not found; check cargo build"; exit 3; }
+mv -f "$INSTALL_DIR/bin/$BIN_NAME.new" "$INSTALL_DIR/bin/$BIN_NAME"
 
 echo "Creating system user and service..."
 id -u $SERVICE_NAME >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin $SERVICE_NAME || true
