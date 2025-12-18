@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'register_customer.dart';
 import 'config.dart';
 import 'customer_list.dart';
+import 'auth_storage.dart';
 
 class LoginPage extends StatefulWidget {
   final String role; // 'admin' or 'owner'
@@ -74,7 +75,10 @@ class _LoginPageState extends State<LoginPage> {
           return;
         }
         final token = resp.data['token'] ?? resp.data['access_token'];
-        if (token != null) await _storage.write(key: 'jwt', value: token);
+        if (token != null) {
+          await _storage.write(key: 'jwt', value: token);
+          await AuthStorage.writeToken(token); // fallback storage for mobile reliability
+        }
         if (!mounted) return;
         Navigator.of(context).pushReplacement(MaterialPageRoute(
           builder: (_) => const _HomeScreen(),

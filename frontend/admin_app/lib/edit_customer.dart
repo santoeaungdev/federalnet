@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'config.dart';
+import 'auth_storage.dart';
 
 class EditCustomerPage extends StatefulWidget {
   final int customerId;
@@ -119,7 +120,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
   }
 
   Future<Dio> _authedDio() async {
-    final token = await _storage.read(key: 'jwt');
+    var token = await _storage.read(key: 'jwt');
+    token ??= await AuthStorage.readToken();
     return Dio(BaseOptions(
       baseUrl: apiBaseUrl,
       connectTimeout: const Duration(seconds: 10),

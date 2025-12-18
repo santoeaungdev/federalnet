@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'config.dart';
 import 'edit_customer.dart';
+import 'auth_storage.dart';
 
 class CustomerListPage extends StatefulWidget {
   const CustomerListPage({super.key});
@@ -29,7 +30,8 @@ class _CustomerListPageState extends State<CustomerListPage> {
       _loading = true;
       _error = null;
     });
-    final token = await _storage.read(key: 'jwt');
+    var token = await _storage.read(key: 'jwt');
+    token ??= await AuthStorage.readToken();
     final dio = Dio(
       BaseOptions(
         baseUrl: apiBaseUrl,
