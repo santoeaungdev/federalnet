@@ -63,6 +63,8 @@ cargo build --release
 
 echo "Installing binary to $INSTALL_DIR/bin"
 mkdir -p "$INSTALL_DIR/bin"
+echo "Stopping service if running to avoid 'Text file busy'..."
+systemctl stop $SERVICE_NAME 2>/dev/null || true
 cp target/release/$BIN_NAME "$INSTALL_DIR/bin/" || { echo "Build output not found; check cargo build"; exit 3; }
 chmod +x "$INSTALL_DIR/bin/$BIN_NAME"
 
@@ -98,7 +100,8 @@ cat > /etc/default/federalnet-api <<'EOF'
 EOF
 
 systemctl daemon-reload
-systemctl enable --now $SERVICE_NAME || systemctl restart $SERVICE_NAME || true
+systemctl enable $SERVICE_NAME || true
+systemctl start $SERVICE_NAME || systemctl restart $SERVICE_NAME || true
 
 echo "Service $SERVICE_NAME installed (or restarted). Check status with: systemctl status $SERVICE_NAME -l"
 echo "Deployment complete."
