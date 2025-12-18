@@ -1,26 +1,51 @@
 #!/usr/bin/env bash
-# Deploy FederalNet backend on an Ubuntu VPS (idempotent-ish)
-# Usage: upload repo tarball or run from checked-out repo on VPS as root
-# Example (from your workstation): scp -r ./ c:/tmp/federalnet-src root@143.110.185.159:/root/
-# Then on VPS: sudo bash /root/federalnet-src/scripts/vps_deploy_backend.sh
+# Deploy FederalNet backend on an Ubuntu VPS (idempotent)
+# This script can work from a local checked-out repo OR it can clone/pull the repo itself.
+#
+# Usage examples (on the VPS):
+#   # Auto-clone/pull from GitHub to /opt/federalnet/src and deploy
+#   sudo GIT_URL="https://github.com/santoeaungdev/federalnet.git" GIT_BRANCH="main" bash -c "curl -fsSL https://raw.githubusercontent.com/santoeaungdev/federalnet/main/scripts/vps_deploy_backend.sh | bash"
+#
+#   # Or, if the repo is already on disk
+#   sudo bash /opt/federalnet/src/scripts/vps_deploy_backend.sh /opt/federalnet/src
 
 set -euo pipefail
 
-REPO_DIR=${1:-/root/federalnet-src}
+# Config
 SERVICE_NAME=federalnet-api
 INSTALL_DIR=/opt/federalnet
+SRC_DIR_DEFAULT=/opt/federalnet/src
 BIN_NAME=federalnet-api
 
-echo "Deploy script starting; using repo dir: $REPO_DIR"
+# Input args/env
+REPO_DIR=${1:-}
+GIT_URL=${GIT_URL:-https://github.com/santoeaungdev/federalnet.git}
+GIT_BRANCH=${GIT_BRANCH:-main}
 
-if [ ! -d "$REPO_DIR" ]; then
-  echo "Repo directory $REPO_DIR not found. Exiting." >&2
-  exit 2
+if [ -z "${REPO_DIR}" ]; then
+  REPO_DIR="$SRC_DIR_DEFAULT"
 fi
+
+echo "Deploy script starting"
+echo "  REPO_DIR   : $REPO_DIR"
+echo "  GIT_URL    : $GIT_URL"
+echo "  GIT_BRANCH : $GIT_BRANCH"
 
 echo "Updating apt and installing prerequisites..."
 apt-get update -y
 apt-get install -y build-essential pkg-config libssl-dev git curl ca-certificates mysql-client
+
+echo "Ensuring source present at $REPO_DIR ..."
+if [ -d "$REPO_DIR/.git" ]; then
+  echo "Repo exists. Pulling latest..."
+  git -C "$REPO_DIR" fetch origin "$GIT_BRANCH"
+  git -C "$REPO_DIR" reset --hard "origin/$GIT_BRANCH"
+else
+  echo "Cloning repo..."
+  install -d "$REPO_DIR"
+  rm -rf "$REPO_DIR"/* 2>/dev/null || true
+  git clone --depth 1 -b "$GIT_BRANCH" "$GIT_URL" "$REPO_DIR"
+fi
 
 if ! command -v rustc >/dev/null 2>&1; then
   echo "Installing rustup and toolchain..."
