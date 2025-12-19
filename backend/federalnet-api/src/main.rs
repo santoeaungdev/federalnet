@@ -7,7 +7,8 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use sha1::Sha1;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use models::{Customer, CustomerClaims, CustomerLoginRequest, CustomerLoginResponse, CustomerPublic, CustomerRegisterRequest,
-CustomerUpdateRequest, AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, AdminCustomerDetail, NrcRow};
+CustomerUpdateRequest, AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, AdminCustomerDetail, NrcRow,
+Nas, NasCreateRequest, NasUpdateRequest, InternetPlan, InternetPlanCreateRequest, InternetPlanUpdateRequest};
 use serde::Deserialize;
 use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
 use std::env;
@@ -62,7 +63,13 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/customer/update", web::post().to(admin_customer_update))
             .route("/admin/assign_plan", web::post().to(admin_assign_plan))
             .route("/admin/customers", web::get().to(admin_list_customers))
-            .route("/admin/customers/{id}", web::get().to(admin_get_customer));
+            .route("/admin/customers/{id}", web::get().to(admin_get_customer))
+            .route("/admin/nas", web::get().to(admin_list_nas))
+            .route("/admin/nas", web::post().to(admin_create_nas))
+            .route("/admin/nas/{id}", web::post().to(admin_update_nas))
+            .route("/admin/internet_plans", web::get().to(admin_list_internet_plans))
+            .route("/admin/internet_plans", web::post().to(admin_create_internet_plan))
+            .route("/admin/internet_plans/{id}", web::post().to(admin_update_internet_plan));
 
         if enable_seed {
             scoped = scoped
@@ -509,13 +516,30 @@ async fn admin_customer_register(
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
 
-    // Optionally add group mapping for plan/router_tag
-    if !data.router_tag.trim().is_empty() {
+    // Add group mapping based on internet_plan_id or router_tag
+    let groupname = if let Some(plan_id) = data.internet_plan_id {
+        // Fetch radius_groupname from internet plan
+        let plan_group: Option<String> = sqlx::query_scalar(
+            "SELECT radius_groupname FROM tbl_internet_plans WHERE id = ? AND status = 'Active' LIMIT 1"
+        )
+        .bind(plan_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+        
+        plan_group
+    } else if !data.router_tag.trim().is_empty() {
+        Some(data.router_tag.clone())
+    } else {
+        None
+    };
+
+    if let Some(group) = groupname {
         sqlx::query(
             r#"INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)"#
         )
         .bind(&data.pppoe_username)
-        .bind(&data.router_tag)
+        .bind(&group)
         .execute(&mut *tx)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -671,7 +695,8 @@ async fn admin_get_customer(
         r#"
         SELECT c.id, c.username, c.fullname, c.nrc_no, c.phonenumber, c.email,
                c.service_type, c.pppoe_username, c.pppoe_password, c.status,
-               (SELECT groupname FROM radusergroup rug WHERE rug.username = c.pppoe_username ORDER BY priority ASC LIMIT 1) AS groupname
+               (SELECT groupname FROM radusergroup rug WHERE rug.username = c.pppoe_username ORDER BY priority ASC LIMIT 1) AS groupname,
+               NULL as internet_plan_id
         FROM tbl_customers c
         WHERE c.id = ? LIMIT 1
         "#
@@ -681,12 +706,36 @@ async fn admin_get_customer(
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
 
-    let detail = match row {
+    let mut detail = match row {
         Some(r) => r,
         None => return Ok(HttpResponse::NotFound().json(json!({"error": "not_found"}))),
     };
 
-    Ok(HttpResponse::Ok().json(detail))
+    // Fetch internet_plan_id based on groupname
+    if let Some(ref groupname) = detail.groupname {
+        detail.internet_plan_id = sqlx::query_scalar(
+            "SELECT id FROM tbl_internet_plans WHERE radius_groupname = ? LIMIT 1"
+        )
+        .bind(groupname)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    }
+
+    Ok(HttpResponse::Ok().json(json!({
+        "id": detail.id,
+        "username": detail.username,
+        "fullname": detail.fullname,
+        "nrc_no": detail.nrc_no,
+        "phonenumber": detail.phonenumber,
+        "email": detail.email,
+        "service_type": detail.service_type,
+        "pppoe_username": detail.pppoe_username,
+        "pppoe_password": detail.pppoe_password,
+        "status": detail.status,
+        "groupname": detail.groupname,
+        "internet_plan_id": detail.internet_plan_id
+    })))
 }
 
 // Admin-only: update a customer and related PPPoE credentials
@@ -786,7 +835,7 @@ async fn admin_customer_update(
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
-    // update radusergroup mapping
+    // update radusergroup mapping based on internet_plan_id or router_tag
     sqlx::query("DELETE FROM radusergroup WHERE username IN (?, ?)")
         .bind(&current.pppoe_username)
         .bind(&data.pppoe_username)
@@ -794,10 +843,27 @@ async fn admin_customer_update(
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
-    if !data.router_tag.trim().is_empty() {
+    let groupname = if let Some(plan_id) = data.internet_plan_id {
+        // Fetch radius_groupname from internet plan
+        let plan_group: Option<String> = sqlx::query_scalar(
+            "SELECT radius_groupname FROM tbl_internet_plans WHERE id = ? AND status = 'Active' LIMIT 1"
+        )
+        .bind(plan_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+        
+        plan_group
+    } else if !data.router_tag.trim().is_empty() {
+        Some(data.router_tag.clone())
+    } else {
+        None
+    };
+
+    if let Some(group) = groupname {
         sqlx::query("INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)")
             .bind(&data.pppoe_username)
-            .bind(&data.router_tag)
+            .bind(&group)
             .execute(&mut *tx)
             .await
             .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -811,5 +877,222 @@ async fn admin_customer_update(
         "id": data.id,
         "username": data.username,
         "pppoe_username": data.pppoe_username
+    })))
+}
+
+// Admin-only: list NAS entries from FreeRADIUS `nas` table
+async fn admin_list_nas(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+
+    let rows = sqlx::query_as::<_, Nas>(
+        "SELECT id, nasname, shortname, `type` as nas_type, ports, secret, server, community, description, routers FROM nas ORDER BY id ASC"
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    Ok(HttpResponse::Ok().json(rows))
+}
+
+// Admin-only: create a new NAS entry
+async fn admin_create_nas(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    payload: web::Json<NasCreateRequest>,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    let data = payload.into_inner();
+
+    // Validate required fields
+    if data.nasname.trim().is_empty() || data.secret.trim().is_empty() {
+        return Ok(HttpResponse::BadRequest().json(json!({"error": "nasname and secret are required"})));
+    }
+
+    let result = sqlx::query(
+        r#"
+        INSERT INTO nas (nasname, shortname, `type`, secret, description, routers)
+        VALUES (?, ?, ?, ?, ?, '')
+        "#
+    )
+    .bind(&data.nasname)
+    .bind(&data.shortname)
+    .bind(&data.nas_type)
+    .bind(&data.secret)
+    .bind(&data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
+    .execute(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    let nas_id = result.last_insert_id();
+
+    Ok(HttpResponse::Created().json(json!({
+        "id": nas_id,
+        "nasname": data.nasname
+    })))
+}
+
+// Admin-only: update a NAS entry
+async fn admin_update_nas(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<(i32,)>,
+    payload: web::Json<NasUpdateRequest>,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    let nas_id = path.into_inner().0;
+    let mut data = payload.into_inner();
+    data.id = nas_id;
+
+    // Check if NAS exists
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nas WHERE id = ?")
+        .bind(data.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    if exists == 0 {
+        return Ok(HttpResponse::NotFound().json(json!({"error": "nas_not_found"})));
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE nas
+        SET nasname = ?, shortname = ?, `type` = ?, secret = ?, description = ?
+        WHERE id = ?
+        "#
+    )
+    .bind(&data.nasname)
+    .bind(&data.shortname)
+    .bind(&data.nas_type)
+    .bind(&data.secret)
+    .bind(&data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
+    .bind(data.id)
+    .execute(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "id": data.id,
+        "nasname": data.nasname
+    })))
+}
+
+// Admin-only: list internet plans
+async fn admin_list_internet_plans(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+
+    let rows = sqlx::query_as::<_, InternetPlan>(
+        "SELECT id, name, category, price, currency, validity_unit, validity_value, download_mbps, upload_mbps, radius_groupname, status FROM tbl_internet_plans ORDER BY id ASC"
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    Ok(HttpResponse::Ok().json(rows))
+}
+
+// Admin-only: create a new internet plan
+async fn admin_create_internet_plan(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    payload: web::Json<InternetPlanCreateRequest>,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    let data = payload.into_inner();
+
+    // Validate required fields
+    if data.name.trim().is_empty() || data.radius_groupname.trim().is_empty() {
+        return Ok(HttpResponse::BadRequest().json(json!({"error": "name and radius_groupname are required"})));
+    }
+
+    let currency = data.currency.unwrap_or_else(|| "MMK".to_string());
+    let status = data.status.unwrap_or_else(|| "Active".to_string());
+
+    let result = sqlx::query(
+        r#"
+        INSERT INTO tbl_internet_plans
+            (name, category, price, currency, validity_unit, validity_value, download_mbps, upload_mbps, radius_groupname, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#
+    )
+    .bind(&data.name)
+    .bind(&data.category)
+    .bind(&data.price)
+    .bind(&currency)
+    .bind(&data.validity_unit)
+    .bind(data.validity_value)
+    .bind(data.download_mbps)
+    .bind(data.upload_mbps)
+    .bind(&data.radius_groupname)
+    .bind(&status)
+    .execute(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    let plan_id = result.last_insert_id();
+
+    Ok(HttpResponse::Created().json(json!({
+        "id": plan_id,
+        "name": data.name,
+        "radius_groupname": data.radius_groupname
+    })))
+}
+
+// Admin-only: update an internet plan
+async fn admin_update_internet_plan(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<(i32,)>,
+    payload: web::Json<InternetPlanUpdateRequest>,
+) -> actix_web::Result<HttpResponse> {
+    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    let plan_id = path.into_inner().0;
+    let mut data = payload.into_inner();
+    data.id = plan_id;
+
+    // Check if plan exists
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_internet_plans WHERE id = ?")
+        .bind(data.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    if exists == 0 {
+        return Ok(HttpResponse::NotFound().json(json!({"error": "plan_not_found"})));
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE tbl_internet_plans
+        SET name = ?, category = ?, price = ?, currency = ?, validity_unit = ?, validity_value = ?,
+            download_mbps = ?, upload_mbps = ?, radius_groupname = ?, status = ?
+        WHERE id = ?
+        "#
+    )
+    .bind(&data.name)
+    .bind(&data.category)
+    .bind(&data.price)
+    .bind(&data.currency)
+    .bind(&data.validity_unit)
+    .bind(data.validity_value)
+    .bind(data.download_mbps)
+    .bind(data.upload_mbps)
+    .bind(&data.radius_groupname)
+    .bind(&data.status)
+    .bind(data.id)
+    .execute(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "id": data.id,
+        "name": data.name,
+        "radius_groupname": data.radius_groupname
     })))
 }
