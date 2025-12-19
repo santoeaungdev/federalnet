@@ -33,6 +33,10 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
   bool _loadingNrc = false;
   String? _nrcLoadError;
 
+  List<Map<String, dynamic>> _internetPlans = [];
+  int? _selectedPlanId;
+  bool _loadingPlans = false;
+
   static const Map<int, String> _stateLabels = {
     1: 'Kachin',
     2: 'Kayah',
@@ -55,6 +59,7 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
   void initState() {
     super.initState();
     _loadNrcOptions();
+    _loadInternetPlans();
   }
 
   @override
@@ -129,6 +134,33 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
     _nrc.text = _composeNrc() ?? '';
   }
 
+  Future<void> _loadInternetPlans() async {
+    setState(() => _loadingPlans = true);
+
+    final token = await _storage.read(key: 'jwt');
+    final dio = Dio(BaseOptions(
+      baseUrl: apiBaseUrl,
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+      headers: token != null ? {'Authorization': 'Bearer $token'} : {},
+    ));
+
+    try {
+      final resp = await dio.get('/admin/internet_plans');
+      final raw = resp.data as List<dynamic>;
+      setState(() {
+        _internetPlans = raw
+            .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+            .where((plan) => plan['status'] == 'Active')
+            .toList();
+      });
+    } catch (e) {
+      // Silently fail, plans are optional
+    } finally {
+      if (mounted) setState(() => _loadingPlans = false);
+    }
+  }
+
   String? _composeNrc() {
     if (_selectedTownship == null) return null;
     final digits = _nrcNumber.text.replaceAll(RegExp(r'[^0-9]'), '');
@@ -174,6 +206,7 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
             'pppoe_username': _username.text,
             'pppoe_password': _password.text,
             'router_tag': '',
+            'internet_plan_id': _selectedPlanId,
           },
           options: Options(headers: headers));
 
@@ -344,6 +377,36 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
                 controller: _email,
                 decoration: const InputDecoration(labelText: 'Email'),
               ),
+              const SizedBox(height: 16),
+              if (_loadingPlans)
+                const LinearProgressIndicator()
+              else if (_internetPlans.isNotEmpty)
+                DropdownButtonFormField<int>(
+                  value: _selectedPlanId,
+                  decoration: const InputDecoration(
+                    labelText: 'Internet Plan (optional)',
+                    helperText: 'Select a plan to auto-assign RADIUS group',
+                  ),
+                  items: [
+                    const DropdownMenuItem<int>(
+                      value: null,
+                      child: Text('-- No plan selected --'),
+                    ),
+                    ..._internetPlans.map((plan) {
+                      final id = plan['id'] as int;
+                      final name = plan['name'] ?? '';
+                      final speed = '${plan['download_mbps']}/${plan['upload_mbps']} Mbps';
+                      final price = '${plan['price']} ${plan['currency']}';
+                      return DropdownMenuItem<int>(
+                        value: id,
+                        child: Text('$name - $speed - $price'),
+                      );
+                    }).toList(),
+                  ],
+                  onChanged: (val) {
+                    setState(() => _selectedPlanId = val);
+                  },
+                ),
               const SizedBox(height: 16),
               _loading
                   ? const Center(child: CircularProgressIndicator())
