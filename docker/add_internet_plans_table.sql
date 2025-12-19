@@ -1,7 +1,7 @@
 -- Add tbl_internet_plans table for phpNuxBill-style plan management
 -- This table stores internet plans that can be assigned to customers via RADIUS groups
 
-USE `federalnetwuntho`;
+USE `wunthofederalnet`;
 
 CREATE TABLE IF NOT EXISTS `tbl_internet_plans` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
