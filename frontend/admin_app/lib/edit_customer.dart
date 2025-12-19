@@ -39,6 +39,10 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
   bool _loadingDetail = false;
   String? _nrcLoadError;
 
+  List<Map<String, dynamic>> _internetPlans = [];
+  int? _selectedPlanId;
+  bool _loadingPlans = false;
+
   String _describeError(DioException e) {
     final status = e.response?.statusCode;
     final data = e.response?.data;
@@ -96,6 +100,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     super.initState();
     _loadNrcOptions();
     _loadDetail();
+    _loadInternetPlans();
     
     // Auto-sync PPPoE credentials with username/password
     _username.addListener(_syncPPPoEUsername);
@@ -112,6 +117,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     if (_pppoePassword.text != _password.text) {
       _pppoePassword.text = _password.text;
     }
+
   }
 
   @override
@@ -201,6 +207,11 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
 
       final nrcValue = data['nrc_no']?.toString() ?? '';
       _applyNrcToSelectors(nrcValue);
+
+      // Load internet_plan_id if available
+      if (data['internet_plan_id'] != null) {
+        setState(() => _selectedPlanId = data['internet_plan_id'] as int?);
+      }
     } on DioException catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_describeError(e))));
@@ -209,6 +220,27 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
           .showSnackBar(SnackBar(content: Text('Failed to load customer: $e')));
     } finally {
       if (mounted) setState(() => _loadingDetail = false);
+    }
+  }
+
+  Future<void> _loadInternetPlans() async {
+    setState(() => _loadingPlans = true);
+
+    try {
+      final dio = await _authedDio();
+      final resp = await dio.get('/admin/internet_plans');
+      final raw = resp.data as List<dynamic>;
+      setState(() {
+        _internetPlans = raw
+            .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+            .where((plan) => plan['status'] == 'Active')
+            .toList();
+      });
+    } catch (e) {
+      // Silently fail on network/auth errors. Internet plan field is optional
+      // and customer update can proceed without loading plans (using router_tag instead).
+    } finally {
+      if (mounted) setState(() => _loadingPlans = false);
     }
   }
 
@@ -303,6 +335,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
             'pppoe_username': _username.text,
             'pppoe_password': _password.text,
             'router_tag': '',
+            'internet_plan_id': _selectedPlanId,
           });
 
       if (resp.statusCode == 200) {
@@ -478,6 +511,37 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                 controller: _email,
                 decoration: const InputDecoration(labelText: 'Email'),
               ),
+              const SizedBox(height: 16),
+              if (_loadingPlans)
+                const LinearProgressIndicator()
+              else if (_internetPlans.isNotEmpty)
+                DropdownButtonFormField<int>(
+                  value: _selectedPlanId,
+                  decoration: const InputDecoration(
+                    labelText: 'Internet Plan (optional)',
+                    helperText: 'Select a plan to auto-assign RADIUS group',
+                  ),
+                  items: [
+                    const DropdownMenuItem<int>(
+                      value: null,
+                      child: Text('-- No plan selected --'),
+                    ),
+                    ..._internetPlans.map((plan) {
+                      final id = plan['id'] as int;
+                      final name = plan['name'] ?? '';
+                      final speed = '${plan['download_mbps']}/${plan['upload_mbps']} Mbps';
+                      final price = '${plan['price']} ${plan['currency']}';
+                      return DropdownMenuItem<int>(
+                        value: id,
+                        child: Text('$name - $speed - $price'),
+                      );
+                    }).toList(),
+                  ],
+                  onChanged: (val) {
+                    setState(() => _selectedPlanId = val);
+                  },
+                ),
+              const SizedBox(height: 16),
               TextFormField(
                 controller: _pppoeUsername,
                 decoration: const InputDecoration(

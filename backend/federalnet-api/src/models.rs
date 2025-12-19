@@ -126,6 +126,7 @@ pub struct CustomerRegisterRequest {
     pub pppoe_username: String,
     pub pppoe_password: String,
     pub router_tag: String,    // optional: maps to routers/groupname
+    pub internet_plan_id: Option<i32>,  // optional: ID of internet plan to assign
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -141,6 +142,7 @@ pub struct CustomerUpdateRequest {
     pub pppoe_username: String,
     pub pppoe_password: String,
     pub router_tag: String,
+    pub internet_plan_id: Option<i32>,  // optional: ID of internet plan to assign
 }
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
@@ -164,4 +166,93 @@ pub struct AdminCustomerDetail {
     pub pppoe_password: String,
     pub status: String,
     pub groupname: Option<String>,
+    #[serde(skip)]
+    pub internet_plan_id: Option<i32>,
+}
+
+// NAS (Router) model - maps to FreeRADIUS `nas` table
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct Nas {
+    pub id: i32,
+    pub nasname: String,
+    pub shortname: Option<String>,
+    #[serde(rename = "type")]
+    pub nas_type: String,
+    pub ports: Option<i32>,
+    pub secret: String,
+    pub server: Option<String>,
+    pub community: Option<String>,
+    pub description: String,
+    pub routers: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NasCreateRequest {
+    pub nasname: String,
+    pub shortname: Option<String>,
+    #[serde(default = "default_nas_type")]
+    #[serde(rename = "type")]
+    pub nas_type: String,
+    pub secret: String,
+    pub description: Option<String>,
+}
+
+fn default_nas_type() -> String {
+    "other".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NasUpdateRequest {
+    pub id: i32,
+    pub nasname: String,
+    pub shortname: Option<String>,
+    #[serde(rename = "type")]
+    pub nas_type: String,
+    pub secret: String,
+    pub description: Option<String>,
+}
+
+// InternetPlan model - maps to `tbl_internet_plans` table
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct InternetPlan {
+    pub id: i32,
+    pub name: String,
+    pub category: String,
+    pub price: BigDecimal,
+    pub currency: String,
+    pub validity_unit: String,
+    pub validity_value: i32,
+    pub download_mbps: i32,
+    pub upload_mbps: i32,
+    pub radius_groupname: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InternetPlanCreateRequest {
+    pub name: String,
+    pub category: String,
+    pub price: BigDecimal,
+    pub currency: Option<String>,
+    pub validity_unit: String,
+    pub validity_value: i32,
+    pub download_mbps: i32,
+    pub upload_mbps: i32,
+    pub radius_groupname: String,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InternetPlanUpdateRequest {
+    pub id: i32,
+    pub name: String,
+    pub category: String,
+    pub price: BigDecimal,
+    pub currency: String,
+    pub validity_unit: String,
+    pub validity_value: i32,
+    pub download_mbps: i32,
+    pub upload_mbps: i32,
+    pub radius_groupname: String,
+    pub status: String,
 }

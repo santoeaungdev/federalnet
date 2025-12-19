@@ -5,6 +5,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'config.dart';
 import 'edit_customer.dart';
 import 'auth_storage.dart';
+import 'nas_list.dart';
+import 'internet_plans_list.dart';
+import 'register_customer.dart';
 
 class CustomerListPage extends StatefulWidget {
   const CustomerListPage({super.key});
@@ -60,6 +63,69 @@ class _CustomerListPageState extends State<CustomerListPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Customers')),
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            const DrawerHeader(
+              decoration: BoxDecoration(color: Colors.blue),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Icon(Icons.admin_panel_settings, size: 48, color: Colors.white),
+                  SizedBox(height: 8),
+                  Text(
+                    'FederalNet Admin',
+                    style: TextStyle(color: Colors.white, fontSize: 20),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.people),
+              title: const Text('Customers'),
+              selected: true,
+              onTap: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_add),
+              title: const Text('Register Customer'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const RegisterCustomerPage()),
+                ).then((result) {
+                  if (result == true) _load();
+                });
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.router),
+              title: const Text('NAS (Routers)'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NasListPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.wifi),
+              title: const Text('Internet Plans'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const InternetPlansListPage()),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
       body: RefreshIndicator(
         onRefresh: _load,
         child: _loading
