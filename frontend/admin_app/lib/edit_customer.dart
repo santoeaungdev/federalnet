@@ -39,6 +39,10 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
   bool _loadingDetail = false;
   String? _nrcLoadError;
 
+  List<Map<String, dynamic>> _internetPlans = [];
+  int? _selectedPlanId;
+  bool _loadingPlans = false;
+
   String _describeError(DioException e) {
     final status = e.response?.statusCode;
     final data = e.response?.data;
@@ -96,6 +100,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     super.initState();
     _loadNrcOptions();
     _loadDetail();
+    _loadInternetPlans();
     
     // Auto-sync PPPoE credentials with username/password
     _username.addListener(_syncPPPoEUsername);
@@ -209,6 +214,27 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
           .showSnackBar(SnackBar(content: Text('Failed to load customer: $e')));
     } finally {
       if (mounted) setState(() => _loadingDetail = false);
+    }
+  }
+
+  Future<void> _loadInternetPlans() async {
+    setState(() => _loadingPlans = true);
+
+    try {
+      final dio = await _authedDio();
+      final resp = await dio.get('/admin/internet_plans');
+      final raw = resp.data as List<dynamic>;
+      setState(() {
+        _internetPlans = raw
+            .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+            .where((plan) => plan['status'] == 'Active')
+            .toList();
+      });
+    } catch (e) {
+      // Silently fail on network/auth errors. Internet plan field is optional
+      // and customer update can proceed without loading plans (using router_tag instead).
+    } finally {
+      if (mounted) setState(() => _loadingPlans = false);
     }
   }
 
