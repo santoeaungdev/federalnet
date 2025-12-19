@@ -100,9 +100,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     super.initState();
     _loadNrcOptions();
     _loadDetail();
-<<<<<<< HEAD
     _loadInternetPlans();
-=======
     
     // Auto-sync PPPoE credentials with username/password
     _username.addListener(_syncPPPoEUsername);
@@ -119,7 +117,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     if (_pppoePassword.text != _password.text) {
       _pppoePassword.text = _password.text;
     }
->>>>>>> origin/main
+
   }
 
   @override
