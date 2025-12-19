@@ -11,6 +11,8 @@ class InternetPlansListPage extends StatefulWidget {
 }
 
 class _InternetPlansListPageState extends State<InternetPlansListPage> {
+  static const String defaultPrice = '0';
+  
   final _storage = const FlutterSecureStorage();
   List<dynamic> _plansList = [];
   bool _loading = true;
@@ -116,7 +118,7 @@ class _InternetPlansListPageState extends State<InternetPlansListPage> {
                   labelText: 'Price',
                   hintText: '25000',
                 ),
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -211,7 +213,7 @@ class _InternetPlansListPageState extends State<InternetPlansListPage> {
               await _createPlan({
                 'name': name,
                 'category': categoryCtrl.text,
-                'price': priceCtrl.text.isEmpty ? '0' : priceCtrl.text,
+                'price': priceCtrl.text.isEmpty ? defaultPrice : priceCtrl.text,
                 'currency': currencyCtrl.text,
                 'validity_unit': validityUnitCtrl.text,
                 'validity_value':

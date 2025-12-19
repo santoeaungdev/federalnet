@@ -151,6 +151,8 @@ class _NasListPageState extends State<NasListPage> {
     );
   }
 
+  static const String defaultNasType = 'other';
+
   Future<void> _createNas(
     String nasname,
     String shortname,
@@ -169,7 +171,7 @@ class _NasListPageState extends State<NasListPage> {
         'shortname': shortname.isEmpty ? null : shortname,
         'secret': secret,
         'description': description.isEmpty ? null : description,
-        'type': 'other',
+        'type': defaultNasType,
       });
 
       if (mounted) {

@@ -14,6 +14,8 @@ use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
 use std::env;
 use serde_json::json;
 
+const DEFAULT_NAS_DESCRIPTION: &str = "RADIUS Client";
+
 #[derive(Clone)]
 struct AppState {
     db: MySqlPool,
@@ -968,7 +970,7 @@ async fn admin_update_nas(
     .bind(&data.shortname)
     .bind(&data.nas_type)
     .bind(&data.secret)
-    .bind(&data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
+    .bind(&data.description.unwrap_or_else(|| DEFAULT_NAS_DESCRIPTION.to_string()))
     .bind(data.id)
     .execute(&state.db)
     .await

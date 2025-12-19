@@ -155,7 +155,8 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
             .toList();
       });
     } catch (e) {
-      // Silently fail, plans are optional
+      // Silently fail on network/auth errors. Internet plan selection is optional
+      // and customer registration can proceed without it (using router_tag instead).
     } finally {
       if (mounted) setState(() => _loadingPlans = false);
     }

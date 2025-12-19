@@ -218,7 +218,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
             .toList();
       });
     } catch (e) {
-      // Silently fail, plans are optional
+      // Silently fail on network/auth errors. Internet plan field is optional
+      // and customer update can proceed without loading plans (using router_tag instead).
     } finally {
       if (mounted) setState(() => _loadingPlans = false);
     }
