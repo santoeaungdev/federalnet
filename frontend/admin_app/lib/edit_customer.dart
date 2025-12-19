@@ -96,10 +96,28 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     super.initState();
     _loadNrcOptions();
     _loadDetail();
+    
+    // Auto-sync PPPoE credentials with username/password
+    _username.addListener(_syncPPPoEUsername);
+    _password.addListener(_syncPPPoEPassword);
+  }
+  
+  void _syncPPPoEUsername() {
+    if (_pppoeUsername.text != _username.text) {
+      _pppoeUsername.text = _username.text;
+    }
+  }
+  
+  void _syncPPPoEPassword() {
+    if (_pppoePassword.text != _password.text) {
+      _pppoePassword.text = _password.text;
+    }
   }
 
   @override
   void dispose() {
+    _username.removeListener(_syncPPPoEUsername);
+    _password.removeListener(_syncPPPoEPassword);
     _username.dispose();
     _password.dispose();
     _confirmPassword.dispose();
@@ -282,8 +300,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
             'phonenumber': _phone.text,
             'email': _email.text,
             'service_type': 'PPPoE',
-            'pppoe_username': _pppoeUsername.text,
-            'pppoe_password': _pppoePassword.text,
+            'pppoe_username': _username.text,
+            'pppoe_password': _password.text,
             'router_tag': '',
           });
 
@@ -462,13 +480,18 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
               ),
               TextFormField(
                 controller: _pppoeUsername,
-                decoration: const InputDecoration(labelText: 'PPPoE Username'),
-                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                decoration: const InputDecoration(
+                  labelText: 'PPPoE Username (auto-synced)',
+                ),
+                readOnly: true,
               ),
               TextFormField(
                 controller: _pppoePassword,
-                decoration: const InputDecoration(labelText: 'PPPoE Password'),
-                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                decoration: const InputDecoration(
+                  labelText: 'PPPoE Password (auto-synced)',
+                ),
+                obscureText: true,
+                readOnly: true,
               ),
               const SizedBox(height: 16),
               busy
