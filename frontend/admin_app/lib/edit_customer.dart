@@ -483,7 +483,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                 decoration: const InputDecoration(
                   labelText: 'PPPoE Username (auto-synced)',
                 ),
-                enabled: false,
+                readOnly: true,
               ),
               TextFormField(
                 controller: _pppoePassword,
@@ -491,7 +491,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                   labelText: 'PPPoE Password (auto-synced)',
                 ),
                 obscureText: true,
-                enabled: false,
+                readOnly: true,
               ),
               const SizedBox(height: 16),
               busy
