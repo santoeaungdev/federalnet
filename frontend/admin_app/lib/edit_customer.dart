@@ -102,9 +102,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
       final pppoePass = data['pppoe_password']?.toString() ?? '';
       _password.text = pppoePass;
       
-      // PPPoE fields will auto-sync via listeners
-      _pppoeUsername.text = _username.text;
-      _pppoePassword.text = _password.text;
+      // PPPoE fields will auto-sync via listeners when username/password are set
     } on DioException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -250,7 +248,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                     _buildTextField(_address, 'Address', required: false),
                     _buildTextField(_remark, 'Remark', required: false),
                     _buildTextField(_packageName, 'Package Name', required: false),
-                    _buildTextField(_packagePrice, 'Package Price', required: false),
+                    _buildNumericField(_packagePrice, 'Package Price', required: false),
                     _buildTextField(_serviceType, 'Service Type', required: false),
                     _buildTextField(_township, 'Township', required: false),
                     _buildTextField(_city, 'City', required: false),
@@ -291,6 +289,30 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                 return null;
               }
             : null,
+      ),
+    );
+  }
+
+  Widget _buildNumericField(TextEditingController controller, String label,
+      {bool required = true}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: TextFormField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        validator: (value) {
+          if (value == null || value.isEmpty) {
+            return required ? 'Please enter $label' : null;
+          }
+          if (double.tryParse(value) == null) {
+            return 'Please enter a valid number';
+          }
+          return null;
+        },
       ),
     );
   }
