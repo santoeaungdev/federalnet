@@ -6,7 +6,8 @@ pluginManagement {
         assert flutterSdkPath != null : "flutter.sdk not set in local.properties"
         return flutterSdkPath
     }()
-    settings.ext.flutterSdkPath = flutterSdkPath()
+    // ↑ this line CALLS the closure and assigns the result (a String path)
+    settings.ext.flutterSdkPath = flutterSdkPath
 
     includeBuild("${settings.ext.flutterSdkPath}/packages/flutter_tools/gradle")
 
