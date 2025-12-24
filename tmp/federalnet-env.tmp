@@ -1,0 +1,2 @@
+DATABASE_URL="mysql://wunthoadmin:admin%24%401nT03@127.0.0.1:3306/wunthofederalnet"
+JWT_SECRET="231fed579857a8439d47ccdb72694e830eb8f4eb915edeacaa4f42d1e90e21e0"

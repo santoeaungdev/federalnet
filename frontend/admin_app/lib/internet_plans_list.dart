@@ -101,7 +101,7 @@ class _InternetPlansListPageState extends State<InternetPlansListPage> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: categoryCtrl.text,
+                initialValue: categoryCtrl.text,
                 decoration: const InputDecoration(labelText: 'Category'),
                 items: const [
                   DropdownMenuItem(value: 'Personal', child: Text('Personal')),
@@ -130,7 +130,7 @@ class _InternetPlansListPageState extends State<InternetPlansListPage> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: validityUnitCtrl.text,
+                initialValue: validityUnitCtrl.text,
                 decoration: const InputDecoration(labelText: 'Validity Unit'),
                 items: const [
                   DropdownMenuItem(value: 'minutes', child: Text('Minutes')),
@@ -179,7 +179,7 @@ class _InternetPlansListPageState extends State<InternetPlansListPage> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: statusCtrl.text,
+                initialValue: statusCtrl.text,
                 decoration: const InputDecoration(labelText: 'Status'),
                 items: const [
                   DropdownMenuItem(value: 'Active', child: Text('Active')),

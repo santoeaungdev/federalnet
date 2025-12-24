@@ -174,6 +174,7 @@ pub struct AdminCustomerDetail {
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct Nas {
     pub id: i32,
+    pub owner_id: Option<i32>,
     pub nasname: String,
     pub shortname: Option<String>,
     #[serde(rename = "type")]
@@ -188,6 +189,7 @@ pub struct Nas {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NasCreateRequest {
+    pub owner_id: Option<i32>,
     pub nasname: String,
     pub shortname: Option<String>,
     #[serde(default = "default_nas_type")]
@@ -204,12 +206,94 @@ fn default_nas_type() -> String {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NasUpdateRequest {
     pub id: i32,
+    pub owner_id: Option<i32>,
     pub nasname: String,
     pub shortname: Option<String>,
     #[serde(rename = "type")]
     pub nas_type: String,
     pub secret: String,
     pub description: Option<String>,
+}
+
+// Owner (business user) models - mapped to `tbl_users` rows with user_type='Owner'
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct OwnerPublic {
+    pub id: u32,
+    pub username: String,
+    pub fullname: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OwnerCreateRequest {
+    pub username: String,
+    pub password: String,
+    pub fullname: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserCreateRequest {
+    pub username: String,
+    pub password: String,
+    pub fullname: String,
+    pub user_type: String, // Admin | Report | Owner | Operator
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OwnerUpdateRequest {
+    pub id: u32,
+    pub username: String,
+    pub password: Option<String>,
+    pub fullname: String,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OwnerTopupRequest {
+    pub customer_id: i32,
+    pub amount: BigDecimal,
+    pub note: Option<String>,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PurchasePlanRequest {
+    pub plan_id: i32,
+}
+
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct OwnerWallet {
+    pub owner_id: i32,
+    pub balance: BigDecimal,
+}
+
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct OwnerWalletTransaction {
+    pub id: i64,
+    pub owner_id: i32,
+    pub customer_id: i32,
+    pub amount: BigDecimal,
+    pub note: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct OwnerIncome {
+    pub id: i64,
+    pub owner_id: i32,
+    pub customer_id: Option<i32>,
+    pub nas_id: Option<i32>,
+    pub period: String,
+    pub usage_bytes: i64,
+    pub revenue: bigdecimal::BigDecimal,
+    pub tax: bigdecimal::BigDecimal,
+    pub created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OwnerIncomeComputeRequest {
+    pub period: String, // YYYY-MM
 }
 
 // InternetPlan model - maps to `tbl_internet_plans` table
@@ -226,6 +310,14 @@ pub struct InternetPlan {
     pub upload_mbps: i32,
     pub radius_groupname: String,
     pub status: String,
+}
+
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct InternetPlanBilling {
+    pub id: i32,
+    pub billing_mode: Option<String>,
+    pub price_per_unit: Option<BigDecimal>,
+    pub billing_unit: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

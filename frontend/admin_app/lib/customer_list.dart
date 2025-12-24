@@ -6,6 +6,9 @@ import 'config.dart';
 import 'edit_customer.dart';
 import 'auth_storage.dart';
 import 'nas_list.dart';
+import 'owner_list.dart';
+import 'admin_users.dart';
+import 'operator_list.dart';
 import 'internet_plans_list.dart';
 import 'register_customer.dart';
 
@@ -110,6 +113,36 @@ class _CustomerListPageState extends State<CustomerListPage> {
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const NasListPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.manage_accounts),
+              title: const Text('Owners'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const OwnerListPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.people_outline),
+              title: const Text('Operators'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const OperatorListPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings),
+              title: const Text('Users'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AdminUsersPage()),
                 );
               },
             ),

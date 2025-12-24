@@ -69,6 +69,7 @@ class _LoginPageState extends State<LoginPage> {
         final role = userType?.toString().toLowerCase();
         const allowedRoles = {'admin', 'operator', 'superadmin'};
         if (role == null || !allowedRoles.contains(role)) {
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('This account is not allowed in Admin app.')),
           );
@@ -84,13 +85,16 @@ class _LoginPageState extends State<LoginPage> {
           builder: (_) => const _HomeScreen(),
         ));
       } else {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Login failed: ${resp.statusCode}')));
+          SnackBar(content: Text('Login failed: ${resp.statusCode}')));
       }
     } on DioException catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_describeError(e))));
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Login error: $e')));
     } finally {
@@ -142,7 +146,7 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 class _HomeScreen extends StatelessWidget {
-  const _HomeScreen({super.key});
+  const _HomeScreen();
 
   @override
   Widget build(BuildContext context) {

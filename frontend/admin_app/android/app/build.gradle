@@ -25,16 +25,28 @@ if (flutterVersionName == null) {
 android {
     namespace "com.mmfederalnet.admin_app"
     compileSdkVersion 36
-    ndkVersion flutter.ndkVersion
+    // Read `flutter.ndkVersion` from local.properties and set `ndkVersion`.
+    def flutterNdk = null
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.withReader('UTF-8') { reader -> localProperties.load(reader) }
+        flutterNdk = localProperties.getProperty('flutter.ndkVersion')
+    }
+    if (flutterNdk != null && flutterNdk.toString().trim()) {
+        ndkVersion = flutterNdk
+    }
     
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '17'
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs += ['-Xlint:-options']
     }
 
     sourceSets {

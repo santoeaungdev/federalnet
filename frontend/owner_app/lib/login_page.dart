@@ -70,9 +70,11 @@ class _LoginPageState extends State<LoginPage> {
         final role = userType?.toString().toLowerCase();
         const allowedRoles = {'owner'};
         if (role == null || !allowedRoles.contains(role)) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('This account is not allowed in Owner app.')),
-          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('This account is not allowed in Owner app.')),
+            );
+          }
           return;
         }
         final token = resp.data['token'] ?? resp.data['access_token'];
@@ -81,16 +83,23 @@ class _LoginPageState extends State<LoginPage> {
         Navigator.of(context).pushReplacement(MaterialPageRoute(
           builder: (_) => const _HomeScreen(),
         ));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Login failed: ${resp.statusCode}')));
-      }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Login failed: ${resp.statusCode}')),
+            );
+          }
+        }
     } on DioException catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_describeError(e))));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_describeError(e))));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Login error: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Login error: $e')));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -140,7 +149,7 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 class _HomeScreen extends StatelessWidget {
-  const _HomeScreen({super.key});
+  const _HomeScreen();
 
   @override
   Widget build(BuildContext context) {

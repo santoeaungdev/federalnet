@@ -213,9 +213,11 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
         setState(() => _selectedPlanId = data['internet_plan_id'] as int?);
       }
     } on DioException catch (e) {
+        if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_describeError(e))));
     } catch (e) {
+        if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Failed to load customer: $e')));
     } finally {
@@ -300,7 +302,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     if (_selectedTownship == null) return null;
     final digits = _nrcNumber.text.replaceAll(RegExp(r'[^0-9]'), '');
     if (digits.length != 6) return null;
-    return '${_selectedTownship!.nrcCode}/${_selectedTownship!.nameEn}(${_selectedCitizen})$digits';
+    return '${_selectedTownship!.nrcCode}/${_selectedTownship!.nameEn}($_selectedCitizen)$digits';
   }
 
   Future<void> _submit() async {
@@ -344,13 +346,16 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
             .showSnackBar(const SnackBar(content: Text('Customer updated')));
         Navigator.of(context).pop(true);
       } else {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Failed: ${resp.statusCode}')));
       }
     } on DioException catch (e) {
+        if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_describeError(e))));
     } catch (e) {
+        if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
@@ -420,7 +425,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                   Expanded(
                     flex: 2,
                     child: DropdownButtonFormField<int>(
-                      value: _selectedStateCode,
+                      initialValue: _selectedStateCode,
                       decoration: const InputDecoration(labelText: 'nrc_code'),
                       items: _stateCodes
                           .map((code) => DropdownMenuItem(
@@ -436,7 +441,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                   Expanded(
                     flex: 3,
                     child: DropdownButtonFormField<_NrcOption>(
-                      value: _selectedTownship,
+                      initialValue: _selectedTownship,
                       decoration: const InputDecoration(labelText: 'name_en'),
                       items: _filteredTownships
                           .map((o) => DropdownMenuItem(
@@ -461,7 +466,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                   Expanded(
                     flex: 2,
                     child: DropdownButtonFormField<String>(
-                      value: _selectedCitizen,
+                      initialValue: _selectedCitizen,
                       decoration: const InputDecoration(labelText: 'numbertype'),
                       items: _citizenTypes
                           .map((v) => DropdownMenuItem(value: v, child: Text(v)))
@@ -516,7 +521,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                 const LinearProgressIndicator()
               else if (_internetPlans.isNotEmpty)
                 DropdownButtonFormField<int>(
-                  value: _selectedPlanId,
+                  initialValue: _selectedPlanId,
                   decoration: const InputDecoration(
                     labelText: 'Internet Plan (optional)',
                     helperText: 'Select a plan to auto-assign RADIUS group',
