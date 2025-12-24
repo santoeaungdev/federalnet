@@ -1,0 +1,16 @@
+[Unit]
+Description=FederalNet API (Actix) - template
+After=network.target
+
+[Service]
+User=federalnet-api
+Group=federalnet-api
+WorkingDirectory=/opt/federalnet
+ExecStart=/opt/federalnet/bin/federalnet-api
+Restart=on-failure
+Environment=RUST_LOG=info
+# Set DATABASE_URL and JWT_SECRET in /etc/default/federalnet-api or via systemctl edit
+EnvironmentFile=-/etc/default/federalnet-api
+
+[Install]
+WantedBy=multi-user.target
