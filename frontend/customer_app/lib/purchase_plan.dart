@@ -45,11 +45,13 @@ class _PurchasePlanPageState extends State<PurchasePlanPage> {
     final token = await _storage.read(key: 'jwt') ?? await AuthStorage.readToken();
     final dio = Dio(BaseOptions(baseUrl: apiBaseUrl, headers: token != null ? {'Authorization': 'Bearer $token'} : {}));
     try {
-      final resp = await dio.post('/customer/purchase_plan', data: {'plan_id': planId});
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plan purchased')));
+      await dio.post('/customer/purchase_plan', data: {'plan_id': planId});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plan purchased')));
+      }
       _load();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
 

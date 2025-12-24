@@ -69,15 +69,21 @@ class _LoginPageState extends State<LoginPage> {
           builder: (_) => const _HomeScreen(),
         ));
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Login failed: ${resp.statusCode}')));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Login failed: ${resp.statusCode}')));
+        }
       }
     } on DioException catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_describeError(e))));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_describeError(e))));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Login error: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Login error: $e')));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
