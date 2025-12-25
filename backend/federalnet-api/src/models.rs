@@ -1,3 +1,10 @@
+//! Data models and type definitions for FederalNet API
+//!
+//! This module contains all the data structures used throughout the API including:
+//! - Customer and Admin user models
+//! - Request and response types for various endpoints
+//! - Database entity models (NAS, Internet Plans, etc.)
+
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use bigdecimal::BigDecimal;

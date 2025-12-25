@@ -1,10 +1,14 @@
+//! FederalNet API - Internet Service Provider Management System
+//!
+//! This API provides endpoints for managing customers, admins, network equipment (NAS),
+//! and internet plans for an ISP using FreeRADIUS for PPPoE authentication.
+
 mod models;
 mod auth;
 
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpServer};
 use chrono::{Duration, Utc};
-use bcrypt::{hash, DEFAULT_COST};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use models::{Customer, CustomerClaims, CustomerLoginRequest, CustomerLoginResponse, CustomerPublic, CustomerRegisterRequest,
 CustomerUpdateRequest, AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, AdminCustomerDetail, NrcRow,
@@ -15,12 +19,14 @@ use serde_json::json;
 
 const DEFAULT_NAS_DESCRIPTION: &str = "RADIUS Client";
 
+/// Application state shared across all request handlers
 #[derive(Clone)]
 struct AppState {
     db: MySqlPool,
     jwt_secret: String,
 }
 
+/// Health check endpoint
 async fn health() -> HttpResponse {
     HttpResponse::Ok().body("OK")
 }
@@ -200,7 +206,7 @@ async fn customer_login(
     Ok(HttpResponse::Ok().json(resp))
 }
 
-// helper: get claims from Authorization header
+/// Helper function to extract customer JWT claims from Authorization header
 fn extract_customer_claims(req: &HttpRequest, secret: &str) -> Result<CustomerClaims, actix_web::Error> {
     auth::extract_claims(req, secret)
 }
@@ -254,7 +260,7 @@ async fn customer_register(
     )
     .bind(&data.username)
     // hash user password before storing
-    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?)
+    .bind(&auth::hash_password(&data.password)?)
     .bind(&data.fullname)
     .bind(&data.nrc_no)
     .bind(&data.phonenumber)
@@ -350,7 +356,7 @@ async fn seed_test_data(state: web::Data<AppState>) -> actix_web::Result<HttpRes
     Ok(HttpResponse::Ok().json(json!({"result": "ok"})))
 }
 
-// extract admin claims (for admin-only endpoints)
+/// Helper function to extract admin JWT claims from Authorization header (for admin-only endpoints)
 fn extract_admin_claims(req: &HttpRequest, secret: &str) -> Result<models::AdminClaims, actix_web::Error> {
     auth::extract_claims(req, secret)
 }
@@ -420,7 +426,7 @@ async fn admin_customer_register(
         "#
     )
     .bind(&data.username)
-    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?)
+    .bind(&auth::hash_password(&data.password)?)
     .bind(&data.fullname)
     .bind(&data.nrc_no)
     .bind(&data.phonenumber)
@@ -490,7 +496,10 @@ async fn admin_customer_register(
     })))
 }
 
-// check whether the leading NRC code exists in `nrcs` table
+/// Validates whether an NRC code exists in the database.
+///
+/// Extracts the leading numeric code from an NRC number (e.g., "12" from "12/ABCD(N)123456")
+/// and checks if it exists in the nrcs table.
 async fn nrc_code_exists(pool: &MySqlPool, nrc_no: &str) -> Result<bool, actix_web::Error> {
     let code_part = nrc_no.split('/').next().unwrap_or("").trim();
     if code_part.is_empty() { return Ok(false); }
@@ -527,7 +536,7 @@ async fn seed_more_customers(state: web::Data<AppState>) -> actix_web::Result<Ht
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PPPoE', 'Active', 0)"#
         )
         .bind(username)
-        .bind(&hash(pass, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?)
+        .bind(&auth::hash_password(pass)?)
         .bind(fullname)
         .bind(nrc_no)
         .bind(phone)
@@ -741,7 +750,7 @@ async fn admin_customer_update(
         "#
     )
     .bind(&data.username)
-    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)? )
+    .bind(&auth::hash_password(&data.password)?)
     .bind(&data.fullname)
     .bind(&data.nrc_no)
     .bind(&data.phonenumber)
