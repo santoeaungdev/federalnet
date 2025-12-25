@@ -1,0 +1,288 @@
+name: Deploy Backend API to VPS
+
+on:
+  push:
+    branches:
+      - development
+    paths:
+      - 'backend/federalnet-api/**'
+      - '.github/workflows/deploy-backend-to-vps.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: backend/federalnet-api
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: development
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          cache: true
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            backend/federalnet-api/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('backend/federalnet-api/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+        continue-on-error: true
+
+      - name: Run Clippy (linter)
+        run: cargo clippy -- -D warnings
+        continue-on-error: true
+
+      - name: Build Rust project
+        run: |
+          echo "::group::Building Rust project in release mode"
+          cargo build --release --verbose
+          echo "::endgroup::"
+
+      - name: Run tests
+        run: |
+          echo "::group::Running Rust tests"
+          cargo test --release --verbose
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: Verify binary was created
+        run: |
+          if [ -f "target/release/federalnet-api" ]; then
+            echo "✅ Binary created successfully"
+            ls -lh target/release/federalnet-api
+          else
+            echo "❌ Binary not found!"
+            exit 1
+          fi
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          echo "::group::Deploying to VPS"
+          
+          # Create deployment directory on VPS if it doesn't exist
+          ssh -i ~/.ssh/deploy_key -p ${VPS_PORT:-22} ${VPS_USER}@${VPS_HOST} \
+            "sudo mkdir -p /opt/federalnet/bin && sudo chown ${VPS_USER}:${VPS_USER} /opt/federalnet/bin"
+          
+          # Transfer the binary to VPS
+          echo "📦 Transferring binary to VPS..."
+          scp -i ~/.ssh/deploy_key -P ${VPS_PORT:-22} \
+            target/release/federalnet-api \
+            ${VPS_USER}@${VPS_HOST}:/tmp/federalnet-api
+          
+          # Move binary and set permissions
+          ssh -i ~/.ssh/deploy_key -p ${VPS_PORT:-22} ${VPS_USER}@${VPS_HOST} \
+            "sudo mv /tmp/federalnet-api /opt/federalnet/bin/federalnet-api && \
+             sudo chmod +x /opt/federalnet/bin/federalnet-api"
+          
+          echo "✅ Binary transferred successfully"
+          echo "::endgroup::"
+
+      - name: Update environment file on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ENABLE_SEED_ENDPOINTS: ${{ secrets.ENABLE_SEED_ENDPOINTS }}
+        run: |
+          echo "::group::Updating environment configuration"
+          
+          # Create temporary environment file locally
+          cat > /tmp/federalnet-api.env << 'ENVEOF'
+          DATABASE_URL="$DATABASE_URL"
+          JWT_SECRET="$JWT_SECRET"
+          ENABLE_SEED_ENDPOINTS="${ENABLE_SEED_ENDPOINTS:-false}"
+          RUST_LOG=info
+          ENVEOF
+          
+          # Substitute environment variables
+          envsubst < /tmp/federalnet-api.env > /tmp/federalnet-api.env.final
+          
+          # Transfer environment file to VPS
+          scp -i ~/.ssh/deploy_key -P ${VPS_PORT:-22} \
+            /tmp/federalnet-api.env.final \
+            ${VPS_USER}@${VPS_HOST}:/tmp/federalnet-api.env
+          
+          # Move to correct location with proper permissions
+          ssh -i ~/.ssh/deploy_key -p ${VPS_PORT:-22} ${VPS_USER}@${VPS_HOST} \
+            "sudo mv /tmp/federalnet-api.env /etc/default/federalnet-api && \
+             sudo chmod 600 /etc/default/federalnet-api"
+          
+          echo "✅ Environment file updated"
+          echo "::endgroup::"
+
+      - name: Ensure systemd service exists
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          echo "::group::Setting up systemd service"
+          
+          # Create systemd service file locally
+          cat > /tmp/federalnet-api.service << 'SERVICEEOF'
+          [Unit]
+          Description=FederalNet API (Actix)
+          After=network.target
+          
+          [Service]
+          User=federalnet-api
+          Group=federalnet-api
+          WorkingDirectory=/opt/federalnet
+          ExecStart=/opt/federalnet/bin/federalnet-api
+          Restart=on-failure
+          RestartSec=10
+          Environment=RUST_LOG=info
+          EnvironmentFile=-/etc/default/federalnet-api
+          
+          [Install]
+          WantedBy=multi-user.target
+          SERVICEEOF
+          
+          # Transfer service file to VPS
+          scp -i ~/.ssh/deploy_key -P ${VPS_PORT:-22} \
+            /tmp/federalnet-api.service \
+            ${VPS_USER}@${VPS_HOST}:/tmp/federalnet-api.service
+          
+          # Install service and create user
+          ssh -i ~/.ssh/deploy_key -p ${VPS_PORT:-22} ${VPS_USER}@${VPS_HOST} << 'EOF'
+            # Create system user if it doesn't exist
+            if ! id -u federalnet-api >/dev/null 2>&1; then
+              sudo useradd --system --no-create-home --shell /usr/sbin/nologin federalnet-api
+              echo "Created system user: federalnet-api"
+            fi
+            
+            # Install service file
+            sudo mv /tmp/federalnet-api.service /etc/systemd/system/federalnet-api.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable federalnet-api
+            echo "✅ Systemd service configured"
+          EOF
+          
+          echo "::endgroup::"
+
+      - name: Restart federalnet-api service
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          echo "::group::Restarting service"
+          
+          ssh -i ~/.ssh/deploy_key -p ${VPS_PORT:-22} ${VPS_USER}@${VPS_HOST} << 'EOF'
+            echo "🔄 Stopping service if running..."
+            sudo systemctl stop federalnet-api 2>/dev/null || true
+            
+            # Wait for process to fully stop
+            for i in {1..30}; do
+              if pgrep -x "federalnet-api" >/dev/null 2>&1; then 
+                sleep 1
+              else 
+                break
+              fi
+            done
+            
+            echo "🚀 Starting service..."
+            sudo systemctl start federalnet-api
+            
+            # Wait a moment for service to start
+            sleep 3
+            
+            echo "📊 Service status:"
+            sudo systemctl status federalnet-api --no-pager -l || true
+          EOF
+          
+          echo "::endgroup::"
+
+      - name: Verify deployment
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          echo "::group::Verifying deployment"
+          
+          ssh -i ~/.ssh/deploy_key -p ${VPS_PORT:-22} ${VPS_USER}@${VPS_HOST} << 'EOF'
+            echo "🔍 Checking service status..."
+            if sudo systemctl is-active --quiet federalnet-api; then
+              echo "✅ Service is running"
+            else
+              echo "❌ Service is not running"
+              echo "Service logs:"
+              sudo journalctl -u federalnet-api -n 50 --no-pager
+              exit 1
+            fi
+            
+            echo ""
+            echo "🔍 Testing health endpoint..."
+            sleep 2
+            
+            # Try to reach the health endpoint
+            for i in {1..30}; do
+              if curl -f -s http://127.0.0.1:8080/api/health > /dev/null 2>&1; then
+                echo "✅ Health endpoint responded successfully"
+                curl -i http://127.0.0.1:8080/api/health
+                exit 0
+              fi
+              echo "Waiting for service to respond (attempt $i/30)..."
+              sleep 2
+            done
+            
+            echo "❌ Health endpoint did not respond"
+            echo "Recent service logs:"
+            sudo journalctl -u federalnet-api -n 50 --no-pager
+            exit 1
+          EOF
+          
+          echo "::endgroup::"
+
+      - name: Show deployment logs
+        if: always()
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          echo "::group::Deployment logs (last 100 lines)"
+          
+          ssh -i ~/.ssh/deploy_key -p ${VPS_PORT:-22} ${VPS_USER}@${VPS_HOST} \
+            "sudo journalctl -u federalnet-api -n 100 --no-pager" || true
+          
+          echo "::endgroup::"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
+          rm -f /tmp/federalnet-api.env*
+          rm -f /tmp/federalnet-api.service
