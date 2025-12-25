@@ -1,0 +1,29 @@
+[Unit]
+Description=FederalNet API Service
+After=network.target mysql.service
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=federalnet
+Group=federalnet
+WorkingDirectory=/opt/federalnet/api
+EnvironmentFile=/etc/default/federalnet-api
+ExecStart=/opt/federalnet/bin/federalnet-api
+Restart=always
+RestartSec=10
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/federalnet/api/logs
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=federalnet-api
+
+[Install]
+WantedBy=multi-user.target
