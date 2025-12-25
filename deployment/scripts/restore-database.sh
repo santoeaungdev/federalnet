@@ -40,9 +40,9 @@ echo "[$(date)] Starting database restore..."
 # Check if file is compressed
 if [[ "$BACKUP_FILE" == *.gz ]]; then
     echo "[$(date)] Decompressing backup file..."
-    gunzip -c "$BACKUP_FILE" | docker exec -i "$MYSQL_CONTAINER" mysql -u root -p"${MYSQL_ROOT_PASSWORD}"
+    gunzip -c "$BACKUP_FILE" | docker exec -i -e MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" "$MYSQL_CONTAINER" mysql -u root
 else
-    cat "$BACKUP_FILE" | docker exec -i "$MYSQL_CONTAINER" mysql -u root -p"${MYSQL_ROOT_PASSWORD}"
+    cat "$BACKUP_FILE" | docker exec -i -e MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" "$MYSQL_CONTAINER" mysql -u root
 fi
 
 echo "[$(date)] Database restored successfully!"

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Deployment validation script
 # Validates that all required files and configurations are present
+# Note: Not using 'set -e' to allow all checks to run and report all failures
 
 set -uo pipefail
 

@@ -178,8 +178,8 @@ BACKUP_DIR="/var/backups/federalnet"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MYSQL_CONTAINER="federalnet-mysql"
 
-# Backup database
-docker exec $MYSQL_CONTAINER mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases > "$BACKUP_DIR/db_backup_$TIMESTAMP.sql"
+# Backup database using MYSQL_PWD environment variable for security
+docker exec -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" $MYSQL_CONTAINER mysqldump -u root --all-databases > "$BACKUP_DIR/db_backup_$TIMESTAMP.sql"
 
 # Compress backup
 gzip "$BACKUP_DIR/db_backup_$TIMESTAMP.sql"

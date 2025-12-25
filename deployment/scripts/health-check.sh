@@ -37,7 +37,7 @@ fi
 
 # Check MySQL
 echo -n "MySQL Database: "
-if docker exec "$MYSQL_CONTAINER" mysqladmin ping -h localhost -u root -p"${MYSQL_ROOT_PASSWORD}" --silent 2>/dev/null; then
+if docker exec -e MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" "$MYSQL_CONTAINER" mysqladmin ping -h localhost -u root --silent 2>/dev/null; then
     echo -e "${GREEN}✓ Healthy${NC}"
 else
     echo -e "${RED}✗ Unhealthy${NC}"

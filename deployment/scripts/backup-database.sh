@@ -22,9 +22,9 @@ echo "[$(date)] Starting database backup..."
 
 # Backup database
 if docker ps | grep -q "$MYSQL_CONTAINER"; then
-    docker exec "$MYSQL_CONTAINER" mysqldump \
+    # Use MYSQL_PWD environment variable to avoid password in process list
+    docker exec -e MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" "$MYSQL_CONTAINER" mysqldump \
         -u root \
-        -p"${MYSQL_ROOT_PASSWORD}" \
         --all-databases \
         --single-transaction \
         --quick \
