@@ -81,7 +81,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .unwrap_or_else(|e| {
             log::error!("Failed to connect to database: {}", e);
-            panic!("Database connection failed: {}. Please check DATABASE_URL and database availability.", e);
+            panic!("Database connection failed. Please check DATABASE_URL and database availability.");
         });
 
     log::info!("Database connection established successfully");
@@ -1784,15 +1784,45 @@ async fn admin_get_owner_income(
     let owner_id = query.get("owner_id").and_then(|s| s.parse::<i32>().ok());
     let period = query.get("period");
 
-    let mut q = String::from("SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE 1=1");
-    if let Some(p) = period { q.push_str(" AND period = '"); q.push_str(p); q.push('"'); }
-    if let Some(oid) = owner_id { q.push_str(" AND owner_id = "); q.push_str(&oid.to_string()); }
-    q.push_str(" ORDER BY period DESC, owner_id ASC");
-
-    let rows = sqlx::query(&q)
-        .fetch_all(&state.db)
-        .await
-        .map_err(actix_web::error::ErrorInternalServerError)?;
+    // Build parameterized query to prevent SQL injection
+    let rows = match (period, owner_id) {
+        (Some(p), Some(oid)) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE period = ? AND owner_id = ? ORDER BY period DESC, owner_id ASC"
+            )
+            .bind(p)
+            .bind(oid)
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+        (Some(p), None) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE period = ? ORDER BY period DESC, owner_id ASC"
+            )
+            .bind(p)
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+        (None, Some(oid)) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE owner_id = ? ORDER BY period DESC, owner_id ASC"
+            )
+            .bind(oid)
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+        (None, None) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income ORDER BY period DESC, owner_id ASC"
+            )
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+    };
 
     let mut out = Vec::new();
     for r in rows {
