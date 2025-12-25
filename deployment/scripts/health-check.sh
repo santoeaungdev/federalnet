@@ -28,10 +28,11 @@ echo ""
 
 # Check API health
 echo -n "API Service: "
-if curl -f -s -o /dev/null -w "%{http_code}" "$API_URL" | grep -q "200"; then
+HTTP_CODE=$(curl -f -s -o /dev/null -w '%{http_code}' "$API_URL" 2>/dev/null || echo '000')
+if [ "$HTTP_CODE" = "200" ]; then
     echo -e "${GREEN}✓ Healthy${NC}"
 else
-    echo -e "${RED}✗ Unhealthy${NC}"
+    echo -e "${RED}✗ Unhealthy (HTTP $HTTP_CODE)${NC}"
     ALL_HEALTHY=false
 fi
 

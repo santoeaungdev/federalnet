@@ -2,8 +2,9 @@
 # Deployment validation script
 # Validates that all required files and configurations are present
 # Note: Not using 'set -e' to allow all checks to run and report all failures
+# Using 'set -u' to catch undefined variables
 
-set -uo pipefail
+set -u
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'

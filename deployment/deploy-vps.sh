@@ -171,23 +171,8 @@ setup_backup() {
     # Create backup directory
     mkdir -p /var/backups/federalnet
     
-    # Create backup script
-    cat > /usr/local/bin/federalnet-backup.sh <<'EOF'
-#!/bin/bash
-BACKUP_DIR="/var/backups/federalnet"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-MYSQL_CONTAINER="federalnet-mysql"
-
-# Backup database using MYSQL_PWD environment variable for security
-docker exec -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" $MYSQL_CONTAINER mysqldump -u root --all-databases > "$BACKUP_DIR/db_backup_$TIMESTAMP.sql"
-
-# Compress backup
-gzip "$BACKUP_DIR/db_backup_$TIMESTAMP.sql"
-
-# Keep only last 7 days of backups
-find $BACKUP_DIR -name "db_backup_*.sql.gz" -mtime +7 -delete
-EOF
-    
+    # Copy backup script to system location
+    cp "$DEPLOY_DIR/deployment/scripts/backup-database.sh" /usr/local/bin/federalnet-backup.sh
     chmod +x /usr/local/bin/federalnet-backup.sh
     
     # Add to crontab (daily at 2 AM)

@@ -23,16 +23,14 @@ echo "[$(date)] Starting database backup..."
 # Backup database
 if docker ps | grep -q "$MYSQL_CONTAINER"; then
     # Use MYSQL_PWD environment variable to avoid password in process list
+    # Pipe directly to gzip to avoid storing sensitive data uncompressed
     docker exec -e MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" "$MYSQL_CONTAINER" mysqldump \
         -u root \
         --all-databases \
         --single-transaction \
         --quick \
         --lock-tables=false \
-        > "$BACKUP_DIR/db_backup_$TIMESTAMP.sql"
-    
-    # Compress backup
-    gzip "$BACKUP_DIR/db_backup_$TIMESTAMP.sql"
+        | gzip > "$BACKUP_DIR/db_backup_$TIMESTAMP.sql.gz"
     
     echo "[$(date)] Backup created: $BACKUP_DIR/db_backup_$TIMESTAMP.sql.gz"
     
