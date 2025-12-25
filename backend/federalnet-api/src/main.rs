@@ -66,22 +66,33 @@ async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
     env_logger::init();
 
+    log::info!("Starting FederalNet API server...");
+
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
     let enable_seed = env::var("ENABLE_SEED_ENDPOINTS")
         .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false);
 
+    log::info!("Connecting to database...");
     let pool = MySqlPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
         .await
-        .expect("DB connect failed");
+        .unwrap_or_else(|e| {
+            log::error!("Failed to connect to database: {}", e);
+            panic!("Database connection failed: {}. Please check DATABASE_URL and database availability.", e);
+        });
+
+    log::info!("Database connection established successfully");
 
     let state = AppState {
         db: pool,
         jwt_secret,
     };
+
+    let bind_address = "0.0.0.0:8080";
+    log::info!("Server will bind to {}", bind_address);
 
     HttpServer::new(move || {
         let mut scoped = web::scope("/api")
@@ -131,7 +142,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(state.clone()))
             .service(scoped)
     })
-        .bind(("0.0.0.0", 8080))?
+        .bind(bind_address)?
         .run()
         .await
 }
@@ -236,6 +247,8 @@ async fn admin_login(
 ) -> actix_web::Result<HttpResponse> {
     let login = payload.into_inner();
 
+    log::info!("Admin login attempt for username: {}", login.username);
+
     let admin = sqlx::query_as::<_, AdminUser>(
         r#"
         SELECT id, username, password, fullname, user_type, status
@@ -246,23 +259,31 @@ async fn admin_login(
     .bind(&login.username)
     .fetch_optional(&state.db)
     .await
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    .map_err(|e| {
+        log::error!("Database error during admin login: {}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
 
     let admin = match admin {
         Some(a) => a,
         None => {
+            log::warn!("Admin login failed - invalid username: {}", login.username);
             return Ok(HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"})));
         }
     };
 
     if admin.status != "Active" {
+        log::warn!("Admin login failed - inactive account: {}", login.username);
         return Ok(HttpResponse::Unauthorized().json(json!({"error": "inactive_admin"})));
     }
 
     // verify admin password with support for bcrypt, legacy SHA1, or plaintext
     let stored = admin.password.clone();
     let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
+        verify(&login.password, &stored).map_err(|e| {
+            log::error!("Bcrypt verification error: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?
     } else if stored.len() == 40 {
         // legacy SHA1 hex
         let bytes = Sha1::from(login.password.as_str()).digest().bytes();
@@ -274,8 +295,11 @@ async fn admin_login(
     };
 
     if !ok {
+        log::warn!("Admin login failed - invalid password: {}", login.username);
         return Ok(HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"})));
     }
+
+    log::info!("Admin login successful: {} (role: {})", login.username, admin.user_type);
 
     let expiration = Utc::now() + Duration::minutes(60);
     let role = if admin.user_type.to_lowercase() == "owner" { "owner" } else { "admin" };
@@ -290,7 +314,10 @@ async fn admin_login(
         &claims,
         &EncodingKey::from_secret(state.jwt_secret.as_bytes()),
     )
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    .map_err(|e| {
+        log::error!("JWT token generation error: {}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
 
     let public: AdminPublic = admin.into();
     let resp = AdminLoginResponse { token, admin: public };
@@ -305,6 +332,8 @@ async fn customer_login(
 ) -> actix_web::Result<HttpResponse> {
     let login = payload.into_inner();
 
+    log::info!("Customer login attempt for username: {}", login.username);
+
     let customer = sqlx::query_as::<_, Customer>(
         r#"
         SELECT id, username, password, fullname, balance, status
@@ -315,11 +344,15 @@ async fn customer_login(
         .bind(&login.username)
         .fetch_optional(&state.db)
         .await
-        .map_err(actix_web::error::ErrorInternalServerError)?;
+        .map_err(|e| {
+            log::error!("Database error during customer login: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?;
 
     let customer = match customer {
         Some(c) => c,
         None => {
+            log::warn!("Customer login failed - invalid username: {}", login.username);
             return Ok(
                 HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"}))
             );
@@ -327,6 +360,7 @@ async fn customer_login(
     };
 
     if customer.status != "Active" {
+        log::warn!("Customer login failed - inactive account: {}", login.username);
         return Ok(
             HttpResponse::Unauthorized().json(json!({"error": "inactive_customer"}))
         );
@@ -335,7 +369,10 @@ async fn customer_login(
     // verify customer password with bcrypt, legacy SHA1, or plaintext
     let stored = customer.password.clone();
     let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
+        verify(&login.password, &stored).map_err(|e| {
+            log::error!("Bcrypt verification error: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?
     } else if stored.len() == 40 {
         let bytes = Sha1::from(login.password.as_str()).digest().bytes();
         let hex = hex::encode(bytes);
@@ -345,10 +382,13 @@ async fn customer_login(
     };
 
     if !ok {
+        log::warn!("Customer login failed - invalid password: {}", login.username);
         return Ok(
             HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"}))
         );
     }
+
+    log::info!("Customer login successful: {}", login.username);
 
     let expiration = Utc::now() + Duration::minutes(60);
     let claims = CustomerClaims {
