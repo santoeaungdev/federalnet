@@ -9,7 +9,6 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use models::{Customer, CustomerClaims, CustomerLoginRequest, CustomerLoginResponse, CustomerPublic, CustomerRegisterRequest,
 CustomerUpdateRequest, AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, AdminCustomerDetail, NrcRow,
 Nas, NasCreateRequest, NasUpdateRequest, InternetPlan, InternetPlanCreateRequest, InternetPlanUpdateRequest};
-use serde::Deserialize;
 use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
 use std::env;
 use serde_json::json;
@@ -20,11 +19,6 @@ const DEFAULT_NAS_DESCRIPTION: &str = "RADIUS Client";
 struct AppState {
     db: MySqlPool,
     jwt_secret: String,
-}
-
-#[derive(Deserialize)]
-struct DbConfig {
-    database_url: String,
 }
 
 async fn health() -> HttpResponse {
@@ -923,7 +917,7 @@ async fn admin_create_nas(
     .bind(&data.shortname)
     .bind(&data.nas_type)
     .bind(&data.secret)
-    .bind(&data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
+    .bind(data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
     .execute(&state.db)
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -970,7 +964,7 @@ async fn admin_update_nas(
     .bind(&data.shortname)
     .bind(&data.nas_type)
     .bind(&data.secret)
-    .bind(&data.description.unwrap_or_else(|| DEFAULT_NAS_DESCRIPTION.to_string()))
+    .bind(data.description.unwrap_or_else(|| DEFAULT_NAS_DESCRIPTION.to_string()))
     .bind(data.id)
     .execute(&state.db)
     .await
