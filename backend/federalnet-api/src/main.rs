@@ -1,11 +1,11 @@
 mod models;
+mod auth;
 
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpServer};
 use chrono::{Duration, Utc};
-use bcrypt::{hash, verify, DEFAULT_COST};
-use sha1::Sha1;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use bcrypt::{hash, DEFAULT_COST};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use models::{Customer, CustomerClaims, CustomerLoginRequest, CustomerLoginResponse, CustomerPublic, CustomerRegisterRequest,
 CustomerUpdateRequest, AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, AdminCustomerDetail, NrcRow,
 Nas, NasCreateRequest, NasUpdateRequest, InternetPlan, InternetPlanCreateRequest, InternetPlanUpdateRequest};
@@ -115,20 +115,7 @@ async fn admin_login(
     }
 
     // verify admin password with support for bcrypt, legacy SHA1, or plaintext
-    let stored = admin.password.clone();
-    let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
-    } else if stored.len() == 40 {
-        // legacy SHA1 hex
-        let bytes = Sha1::from(login.password.as_str()).digest().bytes();
-        let hex = hex::encode(bytes);
-        hex == stored
-    } else {
-        // fallback plaintext compare
-        stored == login.password
-    };
-
-    if !ok {
+    if !auth::verify_password(&login.password, &admin.password)? {
         return Ok(HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"})));
     }
 
@@ -187,18 +174,7 @@ async fn customer_login(
     }
 
     // verify customer password with bcrypt, legacy SHA1, or plaintext
-    let stored = customer.password.clone();
-    let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
-    } else if stored.len() == 40 {
-        let bytes = Sha1::from(login.password.as_str()).digest().bytes();
-        let hex = hex::encode(bytes);
-        hex == stored
-    } else {
-        stored == login.password
-    };
-
-    if !ok {
+    if !auth::verify_password(&login.password, &customer.password)? {
         return Ok(
             HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"}))
         );
@@ -225,27 +201,8 @@ async fn customer_login(
 }
 
 // helper: get claims from Authorization header
-fn extract_claims(req: &HttpRequest, secret: &str) -> Result<CustomerClaims, actix_web::Error> {
-    let header = req
-        .headers()
-        .get("Authorization")
-        .ok_or_else(|| actix_web::error::ErrorUnauthorized("missing_token"))?
-        .to_str()
-        .map_err(|_| actix_web::error::ErrorUnauthorized("bad_header"))?;
-
-    if !header.starts_with("Bearer ") {
-        return Err(actix_web::error::ErrorUnauthorized("bad_header"));
-    }
-    let token = &header[7..];
-
-    let data = decode::<CustomerClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::new(Algorithm::HS256),
-    )
-        .map_err(|_| actix_web::error::ErrorUnauthorized("invalid_token"))?;
-
-    Ok(data.claims)
+fn extract_customer_claims(req: &HttpRequest, secret: &str) -> Result<CustomerClaims, actix_web::Error> {
+    auth::extract_claims(req, secret)
 }
 
 // GET /api/customers/me
@@ -253,7 +210,7 @@ async fn customers_me(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
-    let claims = extract_claims(&req, &state.jwt_secret)?;
+    let claims = extract_customer_claims(&req, &state.jwt_secret)?;
 
     let customer = sqlx::query_as::<_, Customer>(
         r#"
@@ -395,26 +352,7 @@ async fn seed_test_data(state: web::Data<AppState>) -> actix_web::Result<HttpRes
 
 // extract admin claims (for admin-only endpoints)
 fn extract_admin_claims(req: &HttpRequest, secret: &str) -> Result<models::AdminClaims, actix_web::Error> {
-    let header = req
-        .headers()
-        .get("Authorization")
-        .ok_or_else(|| actix_web::error::ErrorUnauthorized("missing_token"))?
-        .to_str()
-        .map_err(|_| actix_web::error::ErrorUnauthorized("bad_header"))?;
-
-    if !header.starts_with("Bearer ") {
-        return Err(actix_web::error::ErrorUnauthorized("bad_header"));
-    }
-    let token = &header[7..];
-
-    let data = decode::<models::AdminClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::new(Algorithm::HS256),
-    )
-    .map_err(|_| actix_web::error::ErrorUnauthorized("invalid_token"))?;
-
-    Ok(data.claims)
+    auth::extract_claims(req, secret)
 }
 
 // Admin-only: fetch NRC township codes from `nrcs` table for dropdowns.
