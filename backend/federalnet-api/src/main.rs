@@ -2,7 +2,7 @@ mod models;
 
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpServer};
-use chrono::{Duration, Utc};
+use chrono::{Duration, Utc, Datelike};
 use bcrypt::{hash, verify, DEFAULT_COST};
 use sha1::Sha1;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -12,38 +12,37 @@ Nas, NasCreateRequest, NasUpdateRequest, InternetPlan, InternetPlanCreateRequest
 OwnerPublic, OwnerCreateRequest, OwnerUpdateRequest};
 use serde::Deserialize;
 use bigdecimal::BigDecimal;
-use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
+use sqlx::{mysql::MySqlPoolOptions, MySqlPool, Row};
 use std::env;
 use serde_json::json;
 
-/*
-Backend API: FederalNet (overview, workflow & requirements)
+// Backend API: FederalNet (overview, workflow & requirements)
+//
+// Workflow:
+//  - The API exposes administrative and customer endpoints under /api.
+//  - Admin endpoints (prefix /api/admin) require admin/owner/operator roles and JWT auth.
+//  - Customer endpoints (prefix /api/customer or /api/customer/*) require customer JWT auth.
+//  - Owner-related features implemented:
+//      * owner_wallets and owner_wallet_transactions for owner-funded topups
+//      * idempotency support via idempotency_key on owner_wallet_transactions
+//      * owner_income table to record computed income per owner per period
+//      * owner_gateways mapping and optional nas.owner_id column for owner<->gateway association
+//  - Plan billing supports `billing_mode`, `price_per_unit`, and `billing_unit` on `tbl_internet_plans`.
+//
+// Requirements and operational notes:
+//  - Environment: requires `DATABASE_URL` and `JWT_SECRET` environment variables (see /etc/default/federalnet-api in deployment).
+//  - Database migrations are provided under `docker/*.sql` and the consolidated file `docs/federalnet.sql`.
+//  - Backup the database before applying migrations in production.
+//  - The service runs as a systemd unit and binds to 0.0.0.0:8080 by default.
+//  - Security: JWT signing uses `JWT_SECRET`; rotate and keep secret safe.
+//  - Seed/test endpoints are gated by `ENABLE_SEED_ENDPOINTS` env var for dev only.
+//
+// Implementation comments:
+//  - Routing is declared in `main()` using `web::scope("/api")` and handlers implemented in the same crate.
+//  - Authentication/authorization uses JWT claims extracted in `extract_claims` helper.
+//  - Owner wallet/topup flows expect server-side enforcement of owner id from token claims.
+//  - See `docker/` for SQL migrations and `docs/federalnet.sql` for a consolidated view of changes applied in development.
 
-Workflow:
- - The API exposes administrative and customer endpoints under /api.
- - Admin endpoints (prefix /api/admin) require admin/owner/operator roles and JWT auth.
- - Customer endpoints (prefix /api/customer or /api/customer/*) require customer JWT auth.
- - Owner-related features implemented:
-     * owner_wallets and owner_wallet_transactions for owner-funded topups
-     * idempotency support via idempotency_key on owner_wallet_transactions
-     * owner_income table to record computed income per owner per period
-     * owner_gateways mapping and optional nas.owner_id column for owner<->gateway association
- - Plan billing supports `billing_mode`, `price_per_unit`, and `billing_unit` on `tbl_internet_plans`.
-
-Requirements and operational notes:
- - Environment: requires `DATABASE_URL` and `JWT_SECRET` environment variables (see /etc/default/federalnet-api in deployment).
- - Database migrations are provided under `docker/*.sql` and the consolidated file `docs/federalnet.sql`.
- - Backup the database before applying migrations in production.
- - The service runs as a systemd unit and binds to 0.0.0.0:8080 by default.
- - Security: JWT signing uses `JWT_SECRET`; rotate and keep secret safe.
- - Seed/test endpoints are gated by `ENABLE_SEED_ENDPOINTS` env var for dev only.
-
-Implementation comments:
- - Routing is declared in `main()` using `web::scope("/api")` and handlers implemented in the same crate.
- - Authentication/authorization uses JWT claims extracted in `extract_claims` helper.
- - Owner wallet/topup flows expect server-side enforcement of owner id from token claims.
- - See `docker/` for SQL migrations and `docs/federalnet.sql` for a consolidated view of changes applied in development.
-*/
 
 const DEFAULT_NAS_DESCRIPTION: &str = "RADIUS Client";
 
@@ -162,7 +161,7 @@ async fn main() -> std::io::Result<()> {
         let mut tx = state.db.begin().await.map_err(actix_web::error::ErrorInternalServerError)?;
 
         // check customer balance
-        let bal: f64 = sqlx::query_scalar("SELECT CAST(balance AS CHAR) FROM tbl_customers WHERE id = ? LIMIT 1")
+        let bal: f64 = sqlx::query_scalar::<_, String>("SELECT CAST(balance AS CHAR) FROM tbl_customers WHERE id = ? LIMIT 1")
             .bind(customer_id)
             .fetch_one(&mut *tx)
             .await
