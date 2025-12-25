@@ -261,12 +261,14 @@ pub struct PurchasePlanRequest {
     pub plan_id: i32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct OwnerWallet {
     pub owner_id: i32,
     pub balance: BigDecimal,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct OwnerWalletTransaction {
     pub id: i64,
@@ -278,6 +280,7 @@ pub struct OwnerWalletTransaction {
     pub created_at: chrono::NaiveDateTime,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct OwnerIncome {
     pub id: i64,
@@ -312,6 +315,7 @@ pub struct InternetPlan {
     pub status: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct InternetPlanBilling {
     pub id: i32,

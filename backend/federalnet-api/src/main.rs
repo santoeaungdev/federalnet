@@ -2,7 +2,7 @@ mod models;
 
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpServer};
-use chrono::{Duration, Utc};
+use chrono::{Datelike, Duration, Utc};
 use bcrypt::{hash, verify, DEFAULT_COST};
 use sha1::Sha1;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -12,38 +12,36 @@ Nas, NasCreateRequest, NasUpdateRequest, InternetPlan, InternetPlanCreateRequest
 OwnerPublic, OwnerCreateRequest, OwnerUpdateRequest};
 use serde::Deserialize;
 use bigdecimal::BigDecimal;
-use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
+use sqlx::{mysql::MySqlPoolOptions, MySqlPool, Row};
 use std::env;
 use serde_json::json;
 
-/*
-Backend API: FederalNet (overview, workflow & requirements)
-
-Workflow:
- - The API exposes administrative and customer endpoints under /api.
- - Admin endpoints (prefix /api/admin) require admin/owner/operator roles and JWT auth.
- - Customer endpoints (prefix /api/customer or /api/customer/*) require customer JWT auth.
- - Owner-related features implemented:
-     * owner_wallets and owner_wallet_transactions for owner-funded topups
-     * idempotency support via idempotency_key on owner_wallet_transactions
-     * owner_income table to record computed income per owner per period
-     * owner_gateways mapping and optional nas.owner_id column for owner<->gateway association
- - Plan billing supports `billing_mode`, `price_per_unit`, and `billing_unit` on `tbl_internet_plans`.
-
-Requirements and operational notes:
- - Environment: requires `DATABASE_URL` and `JWT_SECRET` environment variables (see /etc/default/federalnet-api in deployment).
- - Database migrations are provided under `docker/*.sql` and the consolidated file `docs/federalnet.sql`.
- - Backup the database before applying migrations in production.
- - The service runs as a systemd unit and binds to 0.0.0.0:8080 by default.
- - Security: JWT signing uses `JWT_SECRET`; rotate and keep secret safe.
- - Seed/test endpoints are gated by `ENABLE_SEED_ENDPOINTS` env var for dev only.
-
-Implementation comments:
- - Routing is declared in `main()` using `web::scope("/api")` and handlers implemented in the same crate.
- - Authentication/authorization uses JWT claims extracted in `extract_claims` helper.
- - Owner wallet/topup flows expect server-side enforcement of owner id from token claims.
- - See `docker/` for SQL migrations and `docs/federalnet.sql` for a consolidated view of changes applied in development.
-*/
+// Backend API: FederalNet (overview, workflow & requirements)
+//
+// Workflow:
+//  - The API exposes administrative and customer endpoints under /api.
+//  - Admin endpoints (prefix /api/admin) require admin/owner/operator roles and JWT auth.
+//  - Customer endpoints (prefix /api/customer or /api/customer/*) require customer JWT auth.
+//  - Owner-related features implemented:
+//      * owner_wallets and owner_wallet_transactions for owner-funded topups
+//      * idempotency support via idempotency_key on owner_wallet_transactions
+//      * owner_income table to record computed income per owner per period
+//      * owner_gateways mapping and optional nas.owner_id column for owner<->gateway association
+//  - Plan billing supports `billing_mode`, `price_per_unit`, and `billing_unit` on `tbl_internet_plans`.
+//
+// Requirements and operational notes:
+//  - Environment: requires `DATABASE_URL` and `JWT_SECRET` environment variables (see /etc/default/federalnet-api in deployment).
+//  - Database migrations are provided under docker directory and the consolidated file docs/federalnet.sql.
+//  - Backup the database before applying migrations in production.
+//  - The service runs as a systemd unit and binds to 0.0.0.0:8080 by default.
+//  - Security: JWT signing uses `JWT_SECRET`; rotate and keep secret safe.
+//  - Seed/test endpoints are gated by `ENABLE_SEED_ENDPOINTS` env var for dev only.
+//
+// Implementation comments:
+//  - Routing is declared in `main()` using `web::scope("/api")` and handlers implemented in the same crate.
+//  - Authentication/authorization uses JWT claims extracted in `extract_claims` helper.
+//  - Owner wallet/topup flows expect server-side enforcement of owner id from token claims.
+//  - See docker directory for SQL migrations and docs/federalnet.sql for a consolidated view of changes applied in development.
 
 const DEFAULT_NAS_DESCRIPTION: &str = "RADIUS Client";
 
@@ -53,6 +51,7 @@ struct AppState {
     jwt_secret: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct DbConfig {
     database_url: String,
@@ -67,22 +66,33 @@ async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
     env_logger::init();
 
+    log::info!("Starting FederalNet API server...");
+
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
     let enable_seed = env::var("ENABLE_SEED_ENDPOINTS")
         .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false);
 
+    log::info!("Connecting to database...");
     let pool = MySqlPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
         .await
-        .expect("DB connect failed");
+        .unwrap_or_else(|e| {
+            log::error!("Failed to connect to database: {}", e);
+            panic!("Database connection failed. Please check DATABASE_URL and database availability.");
+        });
+
+    log::info!("Database connection established successfully");
 
     let state = AppState {
         db: pool,
         jwt_secret,
     };
+
+    let bind_address = "0.0.0.0:8080";
+    log::info!("Server will bind to {}", bind_address);
 
     HttpServer::new(move || {
         let mut scoped = web::scope("/api")
@@ -132,7 +142,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(state.clone()))
             .service(scoped)
     })
-        .bind(("0.0.0.0", 8080))?
+        .bind(bind_address)?
         .run()
         .await
 }
@@ -162,7 +172,7 @@ async fn main() -> std::io::Result<()> {
         let mut tx = state.db.begin().await.map_err(actix_web::error::ErrorInternalServerError)?;
 
         // check customer balance
-        let bal: f64 = sqlx::query_scalar("SELECT CAST(balance AS CHAR) FROM tbl_customers WHERE id = ? LIMIT 1")
+        let bal: f64 = sqlx::query_scalar::<_, String>("SELECT CAST(balance AS CHAR) FROM tbl_customers WHERE id = ? LIMIT 1")
             .bind(customer_id)
             .fetch_one(&mut *tx)
             .await
@@ -237,6 +247,8 @@ async fn admin_login(
 ) -> actix_web::Result<HttpResponse> {
     let login = payload.into_inner();
 
+    log::info!("Admin login attempt for username: {}", login.username);
+
     let admin = sqlx::query_as::<_, AdminUser>(
         r#"
         SELECT id, username, password, fullname, user_type, status
@@ -247,23 +259,31 @@ async fn admin_login(
     .bind(&login.username)
     .fetch_optional(&state.db)
     .await
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    .map_err(|e| {
+        log::error!("Database error during admin login: {}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
 
     let admin = match admin {
         Some(a) => a,
         None => {
+            log::warn!("Admin login failed - invalid username: {}", login.username);
             return Ok(HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"})));
         }
     };
 
     if admin.status != "Active" {
+        log::warn!("Admin login failed - inactive account: {}", login.username);
         return Ok(HttpResponse::Unauthorized().json(json!({"error": "inactive_admin"})));
     }
 
     // verify admin password with support for bcrypt, legacy SHA1, or plaintext
     let stored = admin.password.clone();
     let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
+        verify(&login.password, &stored).map_err(|e| {
+            log::error!("Bcrypt verification error: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?
     } else if stored.len() == 40 {
         // legacy SHA1 hex
         let bytes = Sha1::from(login.password.as_str()).digest().bytes();
@@ -275,8 +295,11 @@ async fn admin_login(
     };
 
     if !ok {
+        log::warn!("Admin login failed - invalid password: {}", login.username);
         return Ok(HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"})));
     }
+
+    log::info!("Admin login successful: {} (role: {})", login.username, admin.user_type);
 
     let expiration = Utc::now() + Duration::minutes(60);
     let role = if admin.user_type.to_lowercase() == "owner" { "owner" } else { "admin" };
@@ -291,7 +314,10 @@ async fn admin_login(
         &claims,
         &EncodingKey::from_secret(state.jwt_secret.as_bytes()),
     )
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    .map_err(|e| {
+        log::error!("JWT token generation error: {}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
 
     let public: AdminPublic = admin.into();
     let resp = AdminLoginResponse { token, admin: public };
@@ -306,6 +332,8 @@ async fn customer_login(
 ) -> actix_web::Result<HttpResponse> {
     let login = payload.into_inner();
 
+    log::info!("Customer login attempt for username: {}", login.username);
+
     let customer = sqlx::query_as::<_, Customer>(
         r#"
         SELECT id, username, password, fullname, balance, status
@@ -316,11 +344,15 @@ async fn customer_login(
         .bind(&login.username)
         .fetch_optional(&state.db)
         .await
-        .map_err(actix_web::error::ErrorInternalServerError)?;
+        .map_err(|e| {
+            log::error!("Database error during customer login: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?;
 
     let customer = match customer {
         Some(c) => c,
         None => {
+            log::warn!("Customer login failed - invalid username: {}", login.username);
             return Ok(
                 HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"}))
             );
@@ -328,6 +360,7 @@ async fn customer_login(
     };
 
     if customer.status != "Active" {
+        log::warn!("Customer login failed - inactive account: {}", login.username);
         return Ok(
             HttpResponse::Unauthorized().json(json!({"error": "inactive_customer"}))
         );
@@ -336,7 +369,10 @@ async fn customer_login(
     // verify customer password with bcrypt, legacy SHA1, or plaintext
     let stored = customer.password.clone();
     let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
+        verify(&login.password, &stored).map_err(|e| {
+            log::error!("Bcrypt verification error: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?
     } else if stored.len() == 40 {
         let bytes = Sha1::from(login.password.as_str()).digest().bytes();
         let hex = hex::encode(bytes);
@@ -346,10 +382,13 @@ async fn customer_login(
     };
 
     if !ok {
+        log::warn!("Customer login failed - invalid password: {}", login.username);
         return Ok(
             HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"}))
         );
     }
+
+    log::info!("Customer login successful: {}", login.username);
 
     let expiration = Utc::now() + Duration::minutes(60);
     let claims = CustomerClaims {
@@ -595,6 +634,7 @@ fn extract_user_claims(req: &HttpRequest, secret: &str) -> Result<models::AdminC
 }
 
 // extract owner claims specifically
+#[allow(dead_code)]
 fn extract_owner_claims(req: &HttpRequest, secret: &str) -> Result<models::AdminClaims, actix_web::Error> {
     let claims = extract_user_claims(req, secret)?;
     if claims.role.to_lowercase() != "owner" {
@@ -1128,12 +1168,12 @@ async fn admin_create_nas(
         VALUES (?, ?, ?, ?, ?, ?, '')
         "#
     )
-    .bind(&data.owner_id)
+    .bind(data.owner_id)
     .bind(&data.nasname)
     .bind(&data.shortname)
     .bind(&data.nas_type)
     .bind(&data.secret)
-    .bind(&data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
+    .bind(data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
     .execute(&state.db)
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -1175,12 +1215,12 @@ async fn admin_update_nas(
         WHERE id = ?
         "#
     )
-    .bind(&data.owner_id)
+    .bind(data.owner_id)
     .bind(&data.nasname)
     .bind(&data.shortname)
     .bind(&data.nas_type)
     .bind(&data.secret)
-    .bind(&data.description.unwrap_or_else(|| DEFAULT_NAS_DESCRIPTION.to_string()))
+    .bind(data.description.unwrap_or_else(|| DEFAULT_NAS_DESCRIPTION.to_string()))
     .bind(data.id)
     .execute(&state.db)
     .await
@@ -1369,7 +1409,7 @@ async fn admin_owner_topup_customer(
     payload: web::Json<models::OwnerTopupRequest>,
 ) -> actix_web::Result<HttpResponse> {
     // allow either admin or owner; owners may only top up for their own owner_id
-    let owner_id = path.into_inner().0 as i32;
+    let owner_id = path.into_inner().0;
     let claims = extract_user_claims(&req, &state.jwt_secret)?;
     if claims.role.to_lowercase() == "owner" {
         if claims.sub as i32 != owner_id {
@@ -1655,7 +1695,7 @@ async fn admin_compute_owner_income(
     for row in rows {
         let owner_id: Option<i64> = row.try_get("owner_id").ok();
         if owner_id.is_none() { continue; }
-        let owner_id = owner_id.unwrap() as i64;
+        let owner_id = owner_id.unwrap();
         let customer_id: Option<i64> = row.try_get("customer_id").ok();
         let nas_id: Option<i64> = row.try_get("nas_id").ok();
         let usage_bytes: i64 = row.try_get("usage_bytes").unwrap_or(0);
@@ -1675,11 +1715,12 @@ async fn admin_compute_owner_income(
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
         // compute revenue based on plan billing mode
+        #[allow(unused_assignments)]
         let mut revenue = 0.0_f64;
         if let Some(pr) = plan_row {
             let billing_mode: Option<String> = pr.try_get("billing_mode").ok();
             let price_per_unit: Option<BigDecimal> = pr.try_get("price_per_unit").ok();
-            let billing_unit: Option<String> = pr.try_get("billing_unit").ok();
+            let _billing_unit: Option<String> = pr.try_get("billing_unit").ok();
 
             if let Some(ppu) = price_per_unit {
                 let ppu_f = ppu.to_string().parse::<f64>().unwrap_or(0.0);
@@ -1716,7 +1757,7 @@ async fn admin_compute_owner_income(
 
         // insert aggregated record (store revenue/tax as string decimal)
         sqlx::query("INSERT INTO owner_income (owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax) VALUES (?, ?, ?, ?, ?, ?, ?)")
-            .bind(owner_id as i64)
+            .bind(owner_id)
             .bind(customer_id)
             .bind(nas_id)
             .bind(&period)
@@ -1743,15 +1784,45 @@ async fn admin_get_owner_income(
     let owner_id = query.get("owner_id").and_then(|s| s.parse::<i32>().ok());
     let period = query.get("period");
 
-    let mut q = String::from("SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE 1=1");
-    if let Some(ref p) = period { q.push_str(" AND period = '"); q.push_str(p); q.push('"'); }
-    if let Some(oid) = owner_id { q.push_str(" AND owner_id = "); q.push_str(&oid.to_string()); }
-    q.push_str(" ORDER BY period DESC, owner_id ASC");
-
-    let rows = sqlx::query(&q)
-        .fetch_all(&state.db)
-        .await
-        .map_err(actix_web::error::ErrorInternalServerError)?;
+    // Build parameterized query to prevent SQL injection
+    let rows = match (period, owner_id) {
+        (Some(p), Some(oid)) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE period = ? AND owner_id = ? ORDER BY period DESC, owner_id ASC"
+            )
+            .bind(p)
+            .bind(oid)
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+        (Some(p), None) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE period = ? ORDER BY period DESC, owner_id ASC"
+            )
+            .bind(p)
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+        (None, Some(oid)) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income WHERE owner_id = ? ORDER BY period DESC, owner_id ASC"
+            )
+            .bind(oid)
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+        (None, None) => {
+            sqlx::query(
+                "SELECT id, owner_id, customer_id, nas_id, period, usage_bytes, revenue, tax, created_at FROM owner_income ORDER BY period DESC, owner_id ASC"
+            )
+            .fetch_all(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?
+        },
+    };
 
     let mut out = Vec::new();
     for r in rows {
