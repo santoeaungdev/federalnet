@@ -1,32 +1,32 @@
+//! FederalNet API - Internet Service Provider Management System
+//!
+//! This API provides endpoints for managing customers, admins, network equipment (NAS),
+//! and internet plans for an ISP using FreeRADIUS for PPPoE authentication.
+
 mod models;
+mod auth;
 
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpServer};
 use chrono::{Duration, Utc};
-use bcrypt::{hash, verify, DEFAULT_COST};
-use sha1::Sha1;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use models::{Customer, CustomerClaims, CustomerLoginRequest, CustomerLoginResponse, CustomerPublic, CustomerRegisterRequest,
 CustomerUpdateRequest, AdminUser, AdminLoginRequest, AdminLoginResponse, AdminPublic, AdminClaims, AssignPlanRequest, AdminCustomerListItem, AdminCustomerDetail, NrcRow,
 Nas, NasCreateRequest, NasUpdateRequest, InternetPlan, InternetPlanCreateRequest, InternetPlanUpdateRequest};
-use serde::Deserialize;
 use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
 use std::env;
 use serde_json::json;
 
 const DEFAULT_NAS_DESCRIPTION: &str = "RADIUS Client";
 
+/// Application state shared across all request handlers
 #[derive(Clone)]
 struct AppState {
     db: MySqlPool,
     jwt_secret: String,
 }
 
-#[derive(Deserialize)]
-struct DbConfig {
-    database_url: String,
-}
-
+/// Health check endpoint
 async fn health() -> HttpResponse {
     HttpResponse::Ok().body("OK")
 }
@@ -121,20 +121,7 @@ async fn admin_login(
     }
 
     // verify admin password with support for bcrypt, legacy SHA1, or plaintext
-    let stored = admin.password.clone();
-    let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
-    } else if stored.len() == 40 {
-        // legacy SHA1 hex
-        let bytes = Sha1::from(login.password.as_str()).digest().bytes();
-        let hex = hex::encode(bytes);
-        hex == stored
-    } else {
-        // fallback plaintext compare
-        stored == login.password
-    };
-
-    if !ok {
+    if !auth::verify_password(&login.password, &admin.password)? {
         return Ok(HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"})));
     }
 
@@ -193,18 +180,7 @@ async fn customer_login(
     }
 
     // verify customer password with bcrypt, legacy SHA1, or plaintext
-    let stored = customer.password.clone();
-    let ok = if stored.starts_with("$2") {
-        verify(&login.password, &stored).map_err(actix_web::error::ErrorInternalServerError)?
-    } else if stored.len() == 40 {
-        let bytes = Sha1::from(login.password.as_str()).digest().bytes();
-        let hex = hex::encode(bytes);
-        hex == stored
-    } else {
-        stored == login.password
-    };
-
-    if !ok {
+    if !auth::verify_password(&login.password, &customer.password)? {
         return Ok(
             HttpResponse::Unauthorized().json(json!({"error": "invalid_credentials"}))
         );
@@ -230,28 +206,9 @@ async fn customer_login(
     Ok(HttpResponse::Ok().json(resp))
 }
 
-// helper: get claims from Authorization header
-fn extract_claims(req: &HttpRequest, secret: &str) -> Result<CustomerClaims, actix_web::Error> {
-    let header = req
-        .headers()
-        .get("Authorization")
-        .ok_or_else(|| actix_web::error::ErrorUnauthorized("missing_token"))?
-        .to_str()
-        .map_err(|_| actix_web::error::ErrorUnauthorized("bad_header"))?;
-
-    if !header.starts_with("Bearer ") {
-        return Err(actix_web::error::ErrorUnauthorized("bad_header"));
-    }
-    let token = &header[7..];
-
-    let data = decode::<CustomerClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::new(Algorithm::HS256),
-    )
-        .map_err(|_| actix_web::error::ErrorUnauthorized("invalid_token"))?;
-
-    Ok(data.claims)
+/// Helper function to extract customer JWT claims from Authorization header
+fn extract_customer_claims(req: &HttpRequest, secret: &str) -> Result<CustomerClaims, actix_web::Error> {
+    auth::extract_claims(req, secret)
 }
 
 // GET /api/customers/me
@@ -259,7 +216,7 @@ async fn customers_me(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
-    let claims = extract_claims(&req, &state.jwt_secret)?;
+    let claims = extract_customer_claims(&req, &state.jwt_secret)?;
 
     let customer = sqlx::query_as::<_, Customer>(
         r#"
@@ -303,7 +260,7 @@ async fn customer_register(
     )
     .bind(&data.username)
     // hash user password before storing
-    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?)
+    .bind(&auth::hash_password(&data.password)?)
     .bind(&data.fullname)
     .bind(&data.nrc_no)
     .bind(&data.phonenumber)
@@ -399,28 +356,9 @@ async fn seed_test_data(state: web::Data<AppState>) -> actix_web::Result<HttpRes
     Ok(HttpResponse::Ok().json(json!({"result": "ok"})))
 }
 
-// extract admin claims (for admin-only endpoints)
+/// Helper function to extract admin JWT claims from Authorization header (for admin-only endpoints)
 fn extract_admin_claims(req: &HttpRequest, secret: &str) -> Result<models::AdminClaims, actix_web::Error> {
-    let header = req
-        .headers()
-        .get("Authorization")
-        .ok_or_else(|| actix_web::error::ErrorUnauthorized("missing_token"))?
-        .to_str()
-        .map_err(|_| actix_web::error::ErrorUnauthorized("bad_header"))?;
-
-    if !header.starts_with("Bearer ") {
-        return Err(actix_web::error::ErrorUnauthorized("bad_header"));
-    }
-    let token = &header[7..];
-
-    let data = decode::<models::AdminClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::new(Algorithm::HS256),
-    )
-    .map_err(|_| actix_web::error::ErrorUnauthorized("invalid_token"))?;
-
-    Ok(data.claims)
+    auth::extract_claims(req, secret)
 }
 
 // Admin-only: fetch NRC township codes from `nrcs` table for dropdowns.
@@ -488,7 +426,7 @@ async fn admin_customer_register(
         "#
     )
     .bind(&data.username)
-    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?)
+    .bind(&auth::hash_password(&data.password)?)
     .bind(&data.fullname)
     .bind(&data.nrc_no)
     .bind(&data.phonenumber)
@@ -558,7 +496,10 @@ async fn admin_customer_register(
     })))
 }
 
-// check whether the leading NRC code exists in `nrcs` table
+/// Validates whether an NRC code exists in the database.
+///
+/// Extracts the leading numeric code from an NRC number (e.g., "12" from "12/ABCD(N)123456")
+/// and checks if it exists in the nrcs table.
 async fn nrc_code_exists(pool: &MySqlPool, nrc_no: &str) -> Result<bool, actix_web::Error> {
     let code_part = nrc_no.split('/').next().unwrap_or("").trim();
     if code_part.is_empty() { return Ok(false); }
@@ -595,7 +536,7 @@ async fn seed_more_customers(state: web::Data<AppState>) -> actix_web::Result<Ht
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PPPoE', 'Active', 0)"#
         )
         .bind(username)
-        .bind(&hash(pass, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?)
+        .bind(&auth::hash_password(pass)?)
         .bind(fullname)
         .bind(nrc_no)
         .bind(phone)
@@ -809,7 +750,7 @@ async fn admin_customer_update(
         "#
     )
     .bind(&data.username)
-    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)? )
+    .bind(&auth::hash_password(&data.password)?)
     .bind(&data.fullname)
     .bind(&data.nrc_no)
     .bind(&data.phonenumber)
@@ -923,7 +864,7 @@ async fn admin_create_nas(
     .bind(&data.shortname)
     .bind(&data.nas_type)
     .bind(&data.secret)
-    .bind(&data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
+    .bind(data.description.unwrap_or_else(|| "RADIUS Client".to_string()))
     .execute(&state.db)
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -970,7 +911,7 @@ async fn admin_update_nas(
     .bind(&data.shortname)
     .bind(&data.nas_type)
     .bind(&data.secret)
-    .bind(&data.description.unwrap_or_else(|| DEFAULT_NAS_DESCRIPTION.to_string()))
+    .bind(data.description.unwrap_or_else(|| DEFAULT_NAS_DESCRIPTION.to_string()))
     .bind(data.id)
     .execute(&state.db)
     .await
