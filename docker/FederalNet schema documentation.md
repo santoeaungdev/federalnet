@@ -318,6 +318,41 @@ Continuing the Markdown documentation for the rest of the schema you pasted (bil
 | phone | varchar(32) | not null, default '' | Phone |
 | email | varchar(128) | not null, default '' | Email |
 | city | varchar(64) | not null, default '' | City |
+ 
+## Owner tables
+
+### `tbl_owners`
+
+| Column | Type | Constraints | Description |
+| :-- | :-- | :-- | :-- |
+| id | int(11) | PK, auto increment | Owner ID |
+| username | varchar(45) | not null | Login username |
+| password | varchar(128) | not null | Password (hashed/plain) |
+| photo | varchar(128) | not null, default '/user.default.jpg' | Avatar path |
+| nrc_no | varchar(45) | not null | National ID card |
+| pppoe_username | varchar(32) | not null, default '' | PPPoE username |
+| pppoe_password | varchar(45) | not null, default '' | PPPoE password |
+| pppoe_ip | varchar(32) | not null, default '' | PPPoE IP |
+| fullname | varchar(45) | not null | Full name |
+| address | mediumtext | nullable | Address |
+| city | varchar(255) | nullable | City |
+| district | varchar(255) | nullable | District |
+| state | varchar(255) | nullable | State |
+| zip | varchar(10) | nullable | ZIP/post code |
+| phonenumber | varchar(20) | default '0' | Phone |
+| email | varchar(128) | not null, default '1' | Email |
+| coordinates | varchar(50) | not null, default '' | GPS coordinates |
+| account_type | enum('Business','Personal') | default 'Personal' | Account type |
+| balance | decimal(15,2) | not null, default 0.00 | Wallet balance |
+| service_type | enum('Hotspot','PPPoE','VPN','Others') | default 'Others' | Primary service type |
+| auto_renewal | tinyint(1) | not null, default 1 | Auto renew from balance |
+| status | enum('Active','Banned','Disabled','Inactive','Limited','Suspended') | not null, default 'Active' | Status |
+| created_by | int(11) | not null, default 0 | Creator admin ID |
+| created_at | timestamp | not null, default CURRENT_TIMESTAMP | Created time |
+| last_login | datetime | nullable | Last login |
+| owner_type | enum('main_owner','family_member') | not null, default 'main_owner' | Owner role/type |
+| main_owner_id | int(11) | nullable, index | If `owner_type`='family_member', FK to main owner's `id` |
+
 | subdistrict | varchar(64) | not null, default '' | Subdistrict |
 | ward | varchar(64) | not null, default '' | Ward |
 | user_type | enum('SuperAdmin','Admin','Report','Agent','Sales') | not null | Role |

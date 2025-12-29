@@ -101,23 +101,22 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     _loadNrcOptions();
     _loadDetail();
     _loadInternetPlans();
-    
+
     // Auto-sync PPPoE credentials with username/password
     _username.addListener(_syncPPPoEUsername);
     _password.addListener(_syncPPPoEPassword);
   }
-  
+
   void _syncPPPoEUsername() {
     if (_pppoeUsername.text != _username.text) {
       _pppoeUsername.text = _username.text;
     }
   }
-  
+
   void _syncPPPoEPassword() {
     if (_pppoePassword.text != _password.text) {
       _pppoePassword.text = _password.text;
     }
-
   }
 
   @override
@@ -165,13 +164,14 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
       final resp = await dio.get('/admin/nrcs');
       final raw = resp.data as List<dynamic>;
       final items = raw
-          .map((e) =>
-              _NrcOption.fromJson(Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
+          .map((e) => _NrcOption.fromJson(
+              Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
           .toList();
 
       setState(() {
         _nrcOptions = items;
-        _selectedStateCode ??= _stateCodes.isNotEmpty ? _stateCodes.first : null;
+        _selectedStateCode ??=
+            _stateCodes.isNotEmpty ? _stateCodes.first : null;
         _filteredTownships =
             _nrcOptions.where((o) => o.nrcCode == _selectedStateCode).toList();
         _selectedTownship =
@@ -213,11 +213,11 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
         setState(() => _selectedPlanId = data['internet_plan_id'] as int?);
       }
     } on DioException catch (e) {
-        if (!mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_describeError(e))));
     } catch (e) {
-        if (!mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Failed to load customer: $e')));
     } finally {
@@ -278,7 +278,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
           break;
         }
       }
-      _selectedTownship = found ?? (_filteredTownships.isNotEmpty ? _filteredTownships.first : null);
+      _selectedTownship = found ??
+          (_filteredTownships.isNotEmpty ? _filteredTownships.first : null);
     }
     _refreshNrcPreview();
   }
@@ -316,7 +317,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     final composedNrc = _composeNrc();
     if (composedNrc == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Please complete NRC details (state, township, type, 6-digit no).')));
+          content: Text(
+              'Please complete NRC details (state, township, type, 6-digit no).')));
       return;
     }
 
@@ -324,21 +326,26 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     setState(() => _loading = true);
     try {
       final dio = await _authedDio();
-      final resp = await dio.post('/admin/customer/update',
-          data: {
-            'id': widget.customerId,
-            'username': _username.text,
-            'password': _password.text,
-            'fullname': _fullname.text,
-            'nrc_no': _nrc.text,
-            'phonenumber': _phone.text,
-            'email': _email.text,
-            'service_type': 'PPPoE',
-            'pppoe_username': _username.text,
-            'pppoe_password': _password.text,
-            'router_tag': '',
-            'internet_plan_id': _selectedPlanId,
-          });
+      final body = <String, dynamic>{
+        'id': widget.customerId,
+        'username': _username.text,
+        'fullname': _fullname.text,
+        'nrc_no': _nrc.text,
+        'phonenumber': _phone.text,
+        'email': _email.text,
+        'service_type': 'PPPoE',
+        'pppoe_username': _username.text,
+        'router_tag': '',
+        'internet_plan_id': _selectedPlanId,
+      };
+
+      // Only include password fields when non-empty to indicate an update.
+      if (_password.text.trim().isNotEmpty) {
+        body['password'] = _password.text;
+        body['pppoe_password'] = _password.text;
+      }
+
+      final resp = await dio.post('/admin/customer/update', data: body);
 
       if (resp.statusCode == 200) {
         if (!mounted) return;
@@ -351,11 +358,11 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
             SnackBar(content: Text('Failed: ${resp.statusCode}')));
       }
     } on DioException catch (e) {
-        if (!mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_describeError(e))));
     } catch (e) {
-        if (!mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
@@ -388,7 +395,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
               ),
               TextFormField(
                 controller: _confirmPassword,
-                decoration: const InputDecoration(labelText: 'Confirm Password'),
+                decoration:
+                    const InputDecoration(labelText: 'Confirm Password'),
                 obscureText: true,
                 validator: (v) {
                   if (v == null || v.isEmpty) return 'Required';
@@ -430,11 +438,13 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                       items: _stateCodes
                           .map((code) => DropdownMenuItem(
                                 value: code,
-                                child: Text('$code - ${_stateLabels[code] ?? 'Code $code'}'),
+                                child: Text(
+                                    '$code - ${_stateLabels[code] ?? 'Code $code'}'),
                               ))
                           .toList(),
                       onChanged: _loadingNrc ? null : _onStateChanged,
-                      validator: (v) => v == null ? 'Select state/region' : null,
+                      validator: (v) =>
+                          v == null ? 'Select state/region' : null,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -446,7 +456,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                       items: _filteredTownships
                           .map((o) => DropdownMenuItem(
                                 value: o,
-                                child: Text('${o.nrcCode}/${o.nameEn} (${o.nameMm})'),
+                                child: Text(
+                                    '${o.nrcCode}/${o.nameEn} (${o.nameMm})'),
                               ))
                           .toList(),
                       onChanged: _loadingNrc
@@ -467,15 +478,18 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                     flex: 2,
                     child: DropdownButtonFormField<String>(
                       initialValue: _selectedCitizen,
-                      decoration: const InputDecoration(labelText: 'numbertype'),
+                      decoration:
+                          const InputDecoration(labelText: 'numbertype'),
                       items: _citizenTypes
-                          .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                          .map(
+                              (v) => DropdownMenuItem(value: v, child: Text(v)))
                           .toList(),
                       onChanged: (val) {
                         setState(() => _selectedCitizen = val ?? 'N');
                         _refreshNrcPreview();
                       },
-                      validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                      validator: (v) =>
+                          (v == null || v.isEmpty) ? 'Required' : null,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -534,7 +548,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                     ..._internetPlans.map((plan) {
                       final id = plan['id'] as int;
                       final name = plan['name'] ?? '';
-                      final speed = '${plan['download_mbps']}/${plan['upload_mbps']} Mbps';
+                      final speed =
+                          '${plan['download_mbps']}/${plan['upload_mbps']} Mbps';
                       final price = '${plan['price']} ${plan['currency']}';
                       return DropdownMenuItem<int>(
                         value: id,
@@ -565,7 +580,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
               const SizedBox(height: 16),
               busy
                   ? const Center(child: CircularProgressIndicator())
-                  : ElevatedButton(onPressed: _submit, child: const Text('Update')),
+                  : ElevatedButton(
+                      onPressed: _submit, child: const Text('Update')),
             ],
           ),
         ),

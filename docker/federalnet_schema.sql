@@ -278,6 +278,40 @@ CREATE TABLE IF NOT EXISTS `tbl_customers` (
   UNIQUE KEY `username_unique` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Owners (similar to customers, with owner_type and main_owner_id)
+CREATE TABLE IF NOT EXISTS `tbl_owners` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `username` varchar(45) NOT NULL,
+  `password` varchar(128) NOT NULL,
+  `photo` varchar(128) NOT NULL DEFAULT '/user.default.jpg',
+  `nrc_no` varchar(45) NOT NULL,
+  `pppoe_username` varchar(32) NOT NULL DEFAULT '',
+  `pppoe_password` varchar(45) NOT NULL DEFAULT '',
+  `pppoe_ip` varchar(32) NOT NULL DEFAULT '',
+  `fullname` varchar(45) NOT NULL,
+  `address` mediumtext,
+  `city` varchar(255) DEFAULT NULL,
+  `district` varchar(255) DEFAULT NULL,
+  `state` varchar(255) DEFAULT NULL,
+  `zip` varchar(10) DEFAULT NULL,
+  `phonenumber` varchar(20) NOT NULL DEFAULT '0',
+  `email` varchar(128) NOT NULL DEFAULT '1',
+  `coordinates` varchar(50) NOT NULL DEFAULT '',
+  `account_type` enum('Business','Personal') NOT NULL DEFAULT 'Personal',
+  `balance` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `service_type` enum('Hotspot','PPPoE','VPN','Others') NOT NULL DEFAULT 'Others',
+  `auto_renewal` tinyint(1) NOT NULL DEFAULT 1,
+  `status` enum('Active','Banned','Disabled','Inactive','Limited','Suspended') NOT NULL DEFAULT 'Active',
+  `created_by` int(11) NOT NULL DEFAULT 0,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_login` datetime DEFAULT NULL,
+  `owner_type` enum('main_owner','family_member') NOT NULL DEFAULT 'main_owner',
+  `main_owner_id` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `username_unique` (`username`),
+  KEY `main_owner_idx` (`main_owner_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `tbl_customers_fields` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `customer_id` int(11) NOT NULL,

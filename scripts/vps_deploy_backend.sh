@@ -101,7 +101,7 @@ echo "Creating /etc/default/federalnet-api (edit as needed)..."
 cat > /etc/default/federalnet-api <<'EOF'
 # Example environment file for systemd service
 # DATABASE_URL and JWT_SECRET must be set for the service
-# DATABASE_URL=mysql://wunthoadmin:admin$@nT03@127.0.0.1:3306/federalnetwuntho
+# DATABASE_URL=mysql://wunthoadmin:admin$@nT03@127.0.0.1:3306/wunthofederalnet
 # JWT_SECRET=change_me
 EOF
 

@@ -51,6 +51,46 @@ INSERT INTO `nas` VALUES
 UNLOCK TABLES;
 
 --
+-- Table structure for table `tbl_owners`
+--
+
+DROP TABLE IF EXISTS `tbl_owners`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `tbl_owners` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `username` varchar(45) NOT NULL,
+  `password` varchar(128) NOT NULL,
+  `photo` varchar(128) NOT NULL DEFAULT '/user.default.jpg',
+  `pppoe_username` varchar(32) NOT NULL DEFAULT '' COMMENT 'For PPPOE Login',
+  `pppoe_password` varchar(45) NOT NULL DEFAULT '' COMMENT 'For PPPOE Login',
+  `pppoe_ip` varchar(32) NOT NULL DEFAULT '' COMMENT 'For PPPOE Login',
+  `fullname` varchar(45) NOT NULL,
+  `nrc_no` varchar(45) DEFAULT NULL,
+  `address` mediumtext DEFAULT NULL,
+  `city` varchar(255) DEFAULT NULL,
+  `district` varchar(255) DEFAULT NULL,
+  `state` varchar(255) DEFAULT NULL,
+  `zip` varchar(10) DEFAULT NULL,
+  `phonenumber` varchar(20) DEFAULT '0',
+  `email` varchar(128) NOT NULL DEFAULT '1',
+  `coordinates` varchar(50) NOT NULL DEFAULT '' COMMENT 'Latitude and Longitude coordinates',
+  `account_type` enum('Business','Personal') DEFAULT 'Personal' COMMENT 'For selecting account type',
+  `balance` decimal(15,2) NOT NULL DEFAULT 0.00 COMMENT 'For Money Deposit',
+  `service_type` enum('Hotspot','PPPoE','VPN','Others') DEFAULT 'Others' COMMENT 'For selecting user type',
+  `auto_renewal` tinyint(1) NOT NULL DEFAULT 1 COMMENT 'Auto renewall using balance',
+  `status` enum('Active','Banned','Disabled','Inactive','Limited','Suspended') NOT NULL DEFAULT 'Active',
+  `created_by` int(11) NOT NULL DEFAULT 0,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `last_login` datetime DEFAULT NULL,
+  `owner_type` enum('main_owner','family_member') NOT NULL DEFAULT 'main_owner',
+  `main_owner_id` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+
+--
 -- Table structure for table `nasreload`
 --
 

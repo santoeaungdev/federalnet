@@ -99,17 +99,18 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
       final resp = await dio.get('/admin/nrcs');
       final raw = resp.data as List<dynamic>;
       final items = raw
-          .map((e) =>
-            _NrcOption.fromJson(Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
+          .map((e) => _NrcOption.fromJson(
+              Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
           .toList();
 
       setState(() {
         _nrcOptions = items;
-        _selectedStateCode ??= _stateCodes.isNotEmpty ? _stateCodes.first : null;
-        _filteredTownships = _nrcOptions
-            .where((o) => o.nrcCode == _selectedStateCode)
-            .toList();
-        _selectedTownship = _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
+        _selectedStateCode ??=
+            _stateCodes.isNotEmpty ? _stateCodes.first : null;
+        _filteredTownships =
+            _nrcOptions.where((o) => o.nrcCode == _selectedStateCode).toList();
+        _selectedTownship =
+            _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
       });
       _refreshNrcPreview();
     } catch (e) {
@@ -122,10 +123,10 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
   void _onStateChanged(int? code) {
     setState(() {
       _selectedStateCode = code;
-      _filteredTownships = _nrcOptions
-          .where((o) => o.nrcCode == _selectedStateCode)
-          .toList();
-      _selectedTownship = _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
+      _filteredTownships =
+          _nrcOptions.where((o) => o.nrcCode == _selectedStateCode).toList();
+      _selectedTownship =
+          _filteredTownships.isNotEmpty ? _filteredTownships.first : null;
     });
     _refreshNrcPreview();
   }
@@ -179,8 +180,9 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
     }
     final composedNrc = _composeNrc();
     if (composedNrc == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Please complete NRC details (state, township, type, 6-digit no).')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Please complete NRC details (state, township, type, 6-digit no).')));
       return;
     }
 
@@ -195,21 +197,25 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
     try {
       final headers = <String, String>{};
       if (token != null) headers['Authorization'] = 'Bearer $token';
+      final body = <String, dynamic>{
+        'username': _username.text,
+        'fullname': _fullname.text,
+        'nrc_no': _nrc.text,
+        'phonenumber': _phone.text,
+        'email': _email.text,
+        'service_type': 'PPPoE',
+        'pppoe_username': _username.text,
+        'router_tag': '',
+        'internet_plan_id': _selectedPlanId,
+      };
+
+      // Include password fields explicitly; if blank, send null to indicate unchanged
+      body['password'] = _password.text.trim().isEmpty ? null : _password.text;
+      body['pppoe_password'] =
+          _password.text.trim().isEmpty ? null : _password.text;
+
       final resp = await dio.post('/admin/customer/register',
-          data: {
-            'username': _username.text,
-            'password': _password.text,
-            'fullname': _fullname.text,
-            'nrc_no': _nrc.text,
-            'phonenumber': _phone.text,
-            'email': _email.text,
-            'service_type': 'PPPoE',
-            'pppoe_username': _username.text,
-            'pppoe_password': _password.text,
-            'router_tag': '',
-            'internet_plan_id': _selectedPlanId,
-          },
-          options: Options(headers: headers));
+          data: body, options: Options(headers: headers));
 
       if (resp.statusCode == 201 || resp.statusCode == 200) {
         if (!mounted) return;
@@ -253,7 +259,8 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
               ),
               TextFormField(
                 controller: _confirmPassword,
-                decoration: const InputDecoration(labelText: 'Confirm Password'),
+                decoration:
+                    const InputDecoration(labelText: 'Confirm Password'),
                 obscureText: true,
                 validator: (v) {
                   if (v == null || v.isEmpty) return 'Required';
@@ -295,11 +302,13 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
                       items: _stateCodes
                           .map((code) => DropdownMenuItem(
                                 value: code,
-                                child: Text('$code - ${_stateLabels[code] ?? 'Code $code'}'),
+                                child: Text(
+                                    '$code - ${_stateLabels[code] ?? 'Code $code'}'),
                               ))
                           .toList(),
                       onChanged: _loadingNrc ? null : _onStateChanged,
-                      validator: (v) => v == null ? 'Select state/region' : null,
+                      validator: (v) =>
+                          v == null ? 'Select state/region' : null,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -311,7 +320,8 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
                       items: _filteredTownships
                           .map((o) => DropdownMenuItem(
                                 value: o,
-                                child: Text('${o.nrcCode}/${o.nameEn} (${o.nameMm})'),
+                                child: Text(
+                                    '${o.nrcCode}/${o.nameEn} (${o.nameMm})'),
                               ))
                           .toList(),
                       onChanged: _loadingNrc
@@ -332,15 +342,18 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
                     flex: 2,
                     child: DropdownButtonFormField<String>(
                       initialValue: _selectedCitizen,
-                      decoration: const InputDecoration(labelText: 'numbertype'),
+                      decoration:
+                          const InputDecoration(labelText: 'numbertype'),
                       items: _citizenTypes
-                          .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                          .map(
+                              (v) => DropdownMenuItem(value: v, child: Text(v)))
                           .toList(),
                       onChanged: (val) {
                         setState(() => _selectedCitizen = val ?? 'N');
                         _refreshNrcPreview();
                       },
-                      validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                      validator: (v) =>
+                          (v == null || v.isEmpty) ? 'Required' : null,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -399,7 +412,8 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
                     ..._internetPlans.map((plan) {
                       final id = plan['id'] as int;
                       final name = plan['name'] ?? '';
-                      final speed = '${plan['download_mbps']}/${plan['upload_mbps']} Mbps';
+                      final speed =
+                          '${plan['download_mbps']}/${plan['upload_mbps']} Mbps';
                       final price = '${plan['price']} ${plan['currency']}';
                       return DropdownMenuItem<int>(
                         value: id,
@@ -414,7 +428,8 @@ class _RegisterCustomerPageState extends State<RegisterCustomerPage> {
               const SizedBox(height: 16),
               _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : ElevatedButton(onPressed: _submit, child: const Text('Create')),
+                  : ElevatedButton(
+                      onPressed: _submit, child: const Text('Create')),
             ],
           ),
         ),

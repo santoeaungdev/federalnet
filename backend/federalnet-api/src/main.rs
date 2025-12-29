@@ -2,7 +2,7 @@ mod models;
 
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpServer};
-use chrono::{Duration, Utc};
+use chrono::{Duration, Utc, Datelike};
 use bcrypt::{hash, verify, DEFAULT_COST};
 use sha1::Sha1;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -12,38 +12,38 @@ Nas, NasCreateRequest, NasUpdateRequest, InternetPlan, InternetPlanCreateRequest
 OwnerPublic, OwnerCreateRequest, OwnerUpdateRequest};
 use serde::Deserialize;
 use bigdecimal::BigDecimal;
-use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
+use sqlx::{mysql::MySqlPoolOptions, MySqlPool, Row};
 use std::env;
 use serde_json::json;
 
-/*
-Backend API: FederalNet (overview, workflow & requirements)
+//
+// Backend API: FederalNet (overview, workflow & requirements)
 
-Workflow:
- - The API exposes administrative and customer endpoints under /api.
- - Admin endpoints (prefix /api/admin) require admin/owner/operator roles and JWT auth.
- - Customer endpoints (prefix /api/customer or /api/customer/*) require customer JWT auth.
- - Owner-related features implemented:
-     * owner_wallets and owner_wallet_transactions for owner-funded topups
-     * idempotency support via idempotency_key on owner_wallet_transactions
-     * owner_income table to record computed income per owner per period
-     * owner_gateways mapping and optional nas.owner_id column for owner<->gateway association
- - Plan billing supports `billing_mode`, `price_per_unit`, and `billing_unit` on `tbl_internet_plans`.
+// Workflow:
+//  - The API exposes administrative and customer endpoints under /api.
+//  - Admin endpoints (prefix /api/admin) require admin/owner/operator roles and JWT auth.
+//  - Customer endpoints (prefix /api/customer or /api/customer/*) require customer JWT auth.
+//  - Owner-related features implemented:
+//      * owner_wallets and owner_wallet_transactions for owner-funded topups
+//      * idempotency support via idempotency_key on owner_wallet_transactions
+//      * owner_income table to record computed income per owner per period
+//      * owner_gateways mapping and optional nas.owner_id column for owner<->gateway association
+//  - Plan billing supports `billing_mode`, `price_per_unit`, and `billing_unit` on `tbl_internet_plans`.
 
-Requirements and operational notes:
- - Environment: requires `DATABASE_URL` and `JWT_SECRET` environment variables (see /etc/default/federalnet-api in deployment).
- - Database migrations are provided under `docker/*.sql` and the consolidated file `docs/federalnet.sql`.
- - Backup the database before applying migrations in production.
- - The service runs as a systemd unit and binds to 0.0.0.0:8080 by default.
- - Security: JWT signing uses `JWT_SECRET`; rotate and keep secret safe.
- - Seed/test endpoints are gated by `ENABLE_SEED_ENDPOINTS` env var for dev only.
+// Requirements and operational notes:
+//  - Environment: requires `DATABASE_URL` and `JWT_SECRET` environment variables (see /etc/default/federalnet-api in deployment).
+//  - Database migrations are provided under `docker/*.sql` and the consolidated file `docs/federalnet.sql`.
+//  - Backup the database before applying migrations in production.
+//  - The service runs as a systemd unit and binds to 0.0.0.0:8080 by default.
+//  - Security: JWT signing uses `JWT_SECRET`; rotate and keep secret safe.
+//  - Seed/test endpoints are gated by `ENABLE_SEED_ENDPOINTS` env var for dev only.
 
-Implementation comments:
- - Routing is declared in `main()` using `web::scope("/api")` and handlers implemented in the same crate.
- - Authentication/authorization uses JWT claims extracted in `extract_claims` helper.
- - Owner wallet/topup flows expect server-side enforcement of owner id from token claims.
- - See `docker/` for SQL migrations and `docs/federalnet.sql` for a consolidated view of changes applied in development.
-*/
+// Implementation comments:
+//  - Routing is declared in `main()` using `web::scope("/api")` and handlers implemented in the same crate.
+//  - Authentication/authorization uses JWT claims extracted in `extract_claims` helper.
+//  - Owner wallet/topup flows expect server-side enforcement of owner id from token claims.
+//  - See `docker/` for SQL migrations and `docs/federalnet.sql` for a consolidated view of changes applied in development.
+
 
 const DEFAULT_NAS_DESCRIPTION: &str = "RADIUS Client";
 
@@ -53,6 +53,7 @@ struct AppState {
     jwt_secret: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct DbConfig {
     database_url: String,
@@ -90,6 +91,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/login", web::post().to(admin_login))
             .route("/customer/login", web::post().to(customer_login))
             .route("/customers/me", web::get().to(customers_me))
+            .route("/customer/activity", web::get().to(customer_activity))
             .route("/customer/purchase_plan", web::post().to(customer_purchase_plan))
             .route("/customer/register", web::post().to(customer_register))
             .route("/admin/nrcs", web::get().to(admin_list_nrcs))
@@ -115,6 +117,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/owner_income/compute", web::post().to(admin_compute_owner_income))
             .route("/admin/owner_income", web::get().to(admin_get_owner_income))
             .route("/admin/owner_income/history/{owner_id}", web::get().to(admin_owner_income_history))
+            .route("/internet_plans", web::get().to(public_list_internet_plans))
             .route("/admin/internet_plans", web::get().to(admin_list_internet_plans))
             .route("/admin/internet_plans", web::post().to(admin_create_internet_plan))
             .route("/admin/internet_plans/{id}", web::post().to(admin_update_internet_plan));
@@ -148,7 +151,7 @@ async fn main() -> std::io::Result<()> {
         let data = payload.into_inner();
 
         // load plan price
-        let plan_price: Option<String> = sqlx::query_scalar("SELECT price FROM tbl_internet_plans WHERE id = ? AND status = 'Active' LIMIT 1")
+        let plan_price: Option<String> = sqlx::query_scalar::<_, String>("SELECT price FROM tbl_internet_plans WHERE id = ? AND status = 'Active' LIMIT 1")
             .bind(data.plan_id)
             .fetch_optional(&state.db)
             .await
@@ -162,7 +165,7 @@ async fn main() -> std::io::Result<()> {
         let mut tx = state.db.begin().await.map_err(actix_web::error::ErrorInternalServerError)?;
 
         // check customer balance
-        let bal: f64 = sqlx::query_scalar("SELECT CAST(balance AS CHAR) FROM tbl_customers WHERE id = ? LIMIT 1")
+        let bal: f64 = sqlx::query_scalar::<_, String>("SELECT CAST(balance AS CHAR) FROM tbl_customers WHERE id = ? LIMIT 1")
             .bind(customer_id)
             .fetch_one(&mut *tx)
             .await
@@ -183,7 +186,7 @@ async fn main() -> std::io::Result<()> {
             .map_err(actix_web::error::ErrorInternalServerError)?;
 
         // map plan to radgroup and insert radusergroup mapping
-        let groupname: Option<String> = sqlx::query_scalar("SELECT radius_groupname FROM tbl_internet_plans WHERE id = ? LIMIT 1")
+        let groupname: Option<String> = sqlx::query_scalar::<_, String>("SELECT radius_groupname FROM tbl_internet_plans WHERE id = ? LIMIT 1")
             .bind(data.plan_id)
             .fetch_optional(&mut *tx)
             .await
@@ -191,7 +194,7 @@ async fn main() -> std::io::Result<()> {
 
         if let Some(g) = groupname {
             // delete existing mapping and insert new
-            let pppoe_username: String = sqlx::query_scalar("SELECT pppoe_username FROM tbl_customers WHERE id = ? LIMIT 1")
+            let pppoe_username: String = sqlx::query_scalar::<_, String>("SELECT pppoe_username FROM tbl_customers WHERE id = ? LIMIT 1")
                 .bind(customer_id)
                 .fetch_one(&mut *tx)
                 .await
@@ -457,7 +460,7 @@ async fn customer_register(
     .map_err(actix_web::error::ErrorInternalServerError)?;
 
     // get last insert id
-    let customer_id: i64 = sqlx::query_scalar("SELECT CAST(LAST_INSERT_ID() AS SIGNED)")
+    let customer_id: i64 = sqlx::query_scalar::<_, i64>("SELECT CAST(LAST_INSERT_ID() AS SIGNED)")
         .fetch_one(&mut *tx)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -501,7 +504,7 @@ async fn customer_register(
 // Temporary: seed test admin and customer rows for local testing
 async fn seed_test_data(state: web::Data<AppState>) -> actix_web::Result<HttpResponse> {
     // add admin 'testadmin' with plaintext password 'adminpass' if not exists
-    let admin_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_users WHERE username = ?")
+    let admin_exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_users WHERE username = ?")
         .bind("testadmin")
         .fetch_one(&state.db)
         .await
@@ -520,7 +523,7 @@ async fn seed_test_data(state: web::Data<AppState>) -> actix_web::Result<HttpRes
     }
 
     // add customer 'testuser2' with plaintext password 'custpass' if not exists
-    let cust_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE username = ?")
+    let cust_exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_customers WHERE username = ?")
         .bind("testuser2")
         .fetch_one(&state.db)
         .await
@@ -532,6 +535,25 @@ async fn seed_test_data(state: web::Data<AppState>) -> actix_web::Result<HttpRes
             .bind("custpass")
             .bind("Test Customer")
             .bind("testcustomer@example.com")
+            .execute(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?;
+    }
+
+    // add operator 'testoperator' with plaintext password 'operatorpass' if not exists
+    let op_exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_users WHERE username = ? AND user_type = 'Operator'")
+        .bind("testoperator")
+        .fetch_one(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    if op_exists == 0 {
+        sqlx::query("INSERT INTO tbl_users (username, fullname, password, user_type, status, creationdate) VALUES (?, ?, ?, ?, ?, NOW())")
+            .bind("testoperator")
+            .bind("Test Operator")
+            .bind("operatorpass")
+            .bind("Operator")
+            .bind("Active")
             .execute(&state.db)
             .await
             .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -595,6 +617,7 @@ fn extract_user_claims(req: &HttpRequest, secret: &str) -> Result<models::AdminC
 }
 
 // extract owner claims specifically
+#[allow(dead_code)]
 fn extract_owner_claims(req: &HttpRequest, secret: &str) -> Result<models::AdminClaims, actix_web::Error> {
     let claims = extract_user_claims(req, secret)?;
     if claims.role.to_lowercase() != "owner" {
@@ -656,7 +679,7 @@ async fn admin_customer_register(
     }
 
     // ensure unique username and pppoe_username
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE username = ?")
+    let exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_customers WHERE username = ?")
         .bind(&data.username)
         .fetch_one(&state.db)
         .await
@@ -665,7 +688,7 @@ async fn admin_customer_register(
         return Ok(HttpResponse::BadRequest().json(json!({"error": "username_exists"}))); 
     }
 
-    let pexist: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE pppoe_username = ?")
+    let pexist: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_customers WHERE pppoe_username = ?")
         .bind(&data.pppoe_username)
         .fetch_one(&state.db)
         .await
@@ -700,7 +723,7 @@ async fn admin_customer_register(
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
 
-    let customer_id: i64 = sqlx::query_scalar("SELECT CAST(LAST_INSERT_ID() AS SIGNED)")
+    let customer_id: i64 = sqlx::query_scalar::<_, i64>("SELECT CAST(LAST_INSERT_ID() AS SIGNED)")
         .fetch_one(&mut *tx)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -720,7 +743,7 @@ async fn admin_customer_register(
     // Add group mapping based on internet_plan_id or router_tag
     let groupname = if let Some(plan_id) = data.internet_plan_id {
         // Fetch radius_groupname from internet plan
-        let plan_group: Option<String> = sqlx::query_scalar(
+        let plan_group: Option<String> = sqlx::query_scalar::<_, String>(
             "SELECT radius_groupname FROM tbl_internet_plans WHERE id = ? AND status = 'Active' LIMIT 1"
         )
         .bind(plan_id)
@@ -765,7 +788,7 @@ async fn nrc_code_exists(pool: &MySqlPool, nrc_no: &str) -> Result<bool, actix_w
     let digits: String = code_part.chars().take_while(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() { return Ok(false); }
     let code: i64 = digits.parse().map_err(|_| actix_web::error::ErrorBadRequest("invalid_nrc"))?;
-    let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nrcs WHERE nrc_code = ?")
+    let cnt: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nrcs WHERE nrc_code = ?")
         .bind(code)
         .fetch_one(pool)
         .await
@@ -781,7 +804,7 @@ async fn seed_more_customers(state: web::Data<AppState>) -> actix_web::Result<Ht
     ];
 
     for (username, pass, fullname, nrc_no, phone, email, pppoe_u, pppoe_p, group) in customers {
-        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE username = ?")
+        let exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_customers WHERE username = ?")
             .bind(username)
             .fetch_one(&state.db)
             .await
@@ -841,7 +864,7 @@ async fn admin_assign_plan(
     }
     let data = payload.into_inner();
 
-    let rcnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM radcheck WHERE username = ?")
+    let rcnt: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM radcheck WHERE username = ?")
         .bind(&data.pppoe_username)
         .fetch_one(&state.db)
         .await
@@ -924,7 +947,7 @@ async fn admin_get_customer(
 
     // Fetch internet_plan_id based on groupname
     if let Some(ref groupname) = detail.groupname {
-        detail.internet_plan_id = sqlx::query_scalar(
+        detail.internet_plan_id = sqlx::query_scalar::<_, i32>(
             "SELECT id FROM tbl_internet_plans WHERE radius_groupname = ? LIMIT 1"
         )
         .bind(groupname)
@@ -955,8 +978,33 @@ async fn admin_customer_update(
     req: HttpRequest,
     payload: web::Json<CustomerUpdateRequest>,
 ) -> actix_web::Result<HttpResponse> {
-    let _admin = extract_admin_only_claims(&req, &state.jwt_secret)?;
+    // allow admin/superadmin to create any owner, allow an `owner` role to create only family members
+    let claims = extract_user_claims(&req, &state.jwt_secret)?;
+    let role = claims.role.to_lowercase();
     let data = payload.into_inner();
+
+    // if caller is owner, enforce creation of family_member for themselves only
+    if role == "owner" {
+        // ensure requested owner_type is family_member (or default it)
+        let ot = data.owner_type.clone().unwrap_or_else(|| "family_member".to_string());
+        if ot != "family_member" {
+            return Ok(HttpResponse::BadRequest().json(json!({"error": "owners_may_only_create_family_members"}))); 
+        }
+        // enforce main_owner_id to be the caller
+        let owner_id = claims.sub as i32;
+        // count existing family members
+        let count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_owners WHERE main_owner_id = ? AND owner_type = 'family_member'")
+            .bind(owner_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?;
+        if count >= 10 {
+            return Ok(HttpResponse::BadRequest().json(json!({"error": "family_member_limit_reached"}))); 
+        }
+        // set main_owner_id to caller
+        // (ignore provided main_owner_id and override)
+        // later binding will use data.main_owner_id which we override below via a local variable
+    }
 
     // validate NRC code exists
     if !nrc_code_exists(&state.db, &data.nrc_no).await? {
@@ -984,7 +1032,7 @@ async fn admin_customer_update(
     };
 
     // ensure unique username and pppoe_username (excluding current)
-    let uname_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE username = ? AND id <> ?")
+    let uname_exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_customers WHERE username = ? AND id <> ?")
         .bind(&data.username)
         .bind(data.id)
         .fetch_one(&state.db)
@@ -994,7 +1042,7 @@ async fn admin_customer_update(
         return Ok(HttpResponse::BadRequest().json(json!({"error": "username_exists"})));
     }
 
-    let pppoe_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_customers WHERE pppoe_username = ? AND id <> ?")
+    let pppoe_exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_customers WHERE pppoe_username = ? AND id <> ?")
         .bind(&data.pppoe_username)
         .bind(data.id)
         .fetch_one(&state.db)
@@ -1009,6 +1057,22 @@ async fn admin_customer_update(
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
     // update main customer row
+    // Determine final PPPoE password: prefer a provided non-empty value,
+    // otherwise preserve existing. Accept null/omitted or empty as "unchanged".
+    let final_pppoe_password = match &data.pppoe_password {
+        Some(p) if !p.trim().is_empty() => p.clone(),
+        _ => current.pppoe_password.clone(),
+    };
+
+    // Determine stored password for tbl_customers: hash when a new non-empty
+    // password is provided; otherwise preserve existing stored value.
+    let stored_password = match &data.password {
+        Some(p) if !p.trim().is_empty() => {
+            hash(&p, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?
+        }
+        _ => current.pppoe_password.clone(),
+    };
+
     sqlx::query(
         r#"
         UPDATE tbl_customers
@@ -1018,13 +1082,13 @@ async fn admin_customer_update(
         "#
     )
     .bind(&data.username)
-    .bind(&hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)? )
+    .bind(&stored_password)
     .bind(&data.fullname)
     .bind(&data.nrc_no)
     .bind(&data.phonenumber)
     .bind(&data.email)
     .bind(&data.pppoe_username)
-    .bind(&data.pppoe_password)
+    .bind(&final_pppoe_password)
     .bind(&data.service_type)
     .bind(data.id)
     .execute(&mut *tx)
@@ -1041,7 +1105,7 @@ async fn admin_customer_update(
 
     sqlx::query("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)")
         .bind(&data.pppoe_username)
-        .bind(&data.pppoe_password)
+        .bind(&final_pppoe_password)
         .execute(&mut *tx)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -1056,7 +1120,7 @@ async fn admin_customer_update(
 
     let groupname = if let Some(plan_id) = data.internet_plan_id {
         // Fetch radius_groupname from internet plan
-        let plan_group: Option<String> = sqlx::query_scalar(
+        let plan_group: Option<String> = sqlx::query_scalar::<_, String>(
             "SELECT radius_groupname FROM tbl_internet_plans WHERE id = ? AND status = 'Active' LIMIT 1"
         )
         .bind(plan_id)
@@ -1159,7 +1223,7 @@ async fn admin_update_nas(
     data.id = nas_id;
 
     // Check if NAS exists
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nas WHERE id = ?")
+    let exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nas WHERE id = ?")
         .bind(data.id)
         .fetch_one(&state.db)
         .await
@@ -1202,7 +1266,7 @@ async fn admin_delete_nas(
     let nas_id = path.into_inner().0;
 
     // check exists
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nas WHERE id = ?")
+    let exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nas WHERE id = ?")
         .bind(nas_id)
         .fetch_one(&state.db)
         .await
@@ -1231,29 +1295,45 @@ async fn admin_list_owners(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
-    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    let claims = extract_user_claims(&req, &state.jwt_secret)?;
+    let role = claims.role.to_lowercase();
 
-    let rows = sqlx::query_as::<_, OwnerPublic>(
-        "SELECT id, username, fullname, status FROM tbl_users WHERE user_type = 'Owner' ORDER BY id ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    let rows = if role == "owner" {
+        // owner: list self and family members
+        sqlx::query_as::<_, OwnerPublic>(
+            "SELECT id, username, fullname, status, owner_type, main_owner_id FROM tbl_owners WHERE id = ? OR main_owner_id = ? ORDER BY id ASC",
+        )
+        .bind(claims.sub as i32)
+        .bind(claims.sub as i32)
+        .fetch_all(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?
+    } else {
+        sqlx::query_as::<_, OwnerPublic>(
+            "SELECT id, username, fullname, status, owner_type, main_owner_id FROM tbl_owners ORDER BY id ASC",
+        )
+        .fetch_all(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?
+    };
 
     Ok(HttpResponse::Ok().json(rows))
 }
 
-// Admin-only: create owner
+// Create owner: admin creates main_owner; owner can create family_member (max 10)
 async fn admin_create_owner(
     state: web::Data<AppState>,
     req: HttpRequest,
     payload: web::Json<OwnerCreateRequest>,
 ) -> actix_web::Result<HttpResponse> {
-    let _admin = extract_admin_only_claims(&req, &state.jwt_secret)?;
     let data = payload.into_inner();
 
+    // allow admin (admin/superadmin/operator) or owner to call this endpoint
+    let claims = extract_user_claims(&req, &state.jwt_secret)?;
+    let role = claims.role.to_lowercase();
+
     // unique username
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_users WHERE username = ?")
+    let exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_owners WHERE username = ?")
         .bind(&data.username)
         .fetch_one(&state.db)
         .await
@@ -1264,12 +1344,46 @@ async fn admin_create_owner(
 
     let hashed = hash(&data.password, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?;
 
+    // If owner is creating — they can only create family members for themselves and max 10
+    if role == "owner" {
+        // count existing family members for this owner
+        let cnt: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_owners WHERE main_owner_id = ? AND owner_type = 'family_member'")
+            .bind(claims.sub as i32)
+            .fetch_one(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?;
+        if cnt >= 10 {
+            return Ok(HttpResponse::BadRequest().json(json!({"error": "max_family_members_reached"}))); 
+        }
+
+        let result = sqlx::query(
+            "INSERT INTO tbl_owners (username, fullname, password, status, owner_type, main_owner_id) VALUES (?, ?, ?, 'Active', 'family_member', ?)",
+        )
+        .bind(&data.username)
+        .bind(&data.fullname)
+        .bind(&hashed)
+        .bind(claims.sub as i32)
+        .execute(&state.db)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+        let id = result.last_insert_id();
+        return Ok(HttpResponse::Created().json(json!({"id": id, "username": data.username, "owner_type": "family_member", "main_owner_id": claims.sub})));
+    }
+
+    // Admin or operator: only allow creating main_owner (do not allow creating family_member)
+    let owner_type = data.owner_type.unwrap_or_else(|| "main_owner".to_string());
+    if owner_type == "family_member" {
+        return Ok(HttpResponse::BadRequest().json(json!({"error": "admins_cannot_create_family_members"}))); 
+    }
+
     let result = sqlx::query(
-        "INSERT INTO tbl_users (username, fullname, password, user_type, status, creationdate) VALUES (?, ?, ?, 'Owner', 'Active', NOW())",
+        "INSERT INTO tbl_owners (username, fullname, password, status, owner_type, main_owner_id) VALUES (?, ?, ?, 'Active', ?, NULL)",
     )
     .bind(&data.username)
     .bind(&data.fullname)
     .bind(&hashed)
+    .bind("main_owner")
     .execute(&state.db)
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -1286,13 +1400,15 @@ async fn admin_update_owner(
     path: web::Path<(i32,)>,
     payload: web::Json<OwnerUpdateRequest>,
 ) -> actix_web::Result<HttpResponse> {
-    let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
+    // allow admin/operator or owner (owner can only update their own family members)
+    let claims = extract_user_claims(&req, &state.jwt_secret)?;
+    let role = claims.role.to_lowercase();
     let owner_id = path.into_inner().0 as u32;
     let mut data = payload.into_inner();
     data.id = owner_id;
 
-    // ensure owner exists and is of type 'Owner'
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_users WHERE id = ? AND user_type = 'Owner'")
+    // ensure owner exists
+    let exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_owners WHERE id = ?")
         .bind(data.id)
         .fetch_one(&state.db)
         .await
@@ -1301,23 +1417,69 @@ async fn admin_update_owner(
         return Ok(HttpResponse::NotFound().json(json!({"error": "owner_not_found"}))); 
     }
 
-    // update fields; handle optional password
+    if role == "owner" {
+        // owner can only update their own family members
+        let row: Option<(String, Option<i32>)> = sqlx::query_as("SELECT owner_type, main_owner_id FROM tbl_owners WHERE id = ? LIMIT 1")
+            .bind(data.id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?;
+
+        if let Some((ot, mid)) = row {
+            if ot != "family_member" || mid != Some(claims.sub as i32) {
+                return Err(actix_web::error::ErrorUnauthorized("cannot_update_owner"));
+            }
+        } else {
+            return Ok(HttpResponse::NotFound().json(json!({"error": "owner_not_found"}))); 
+        }
+
+        // owner may update username/fullname/password/status only; ignore owner_type/main_owner_id
+        if let Some(pw) = data.password {
+            let hashed = hash(&pw, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?;
+            sqlx::query("UPDATE tbl_owners SET username = ?, fullname = ?, password = ?, status = ? WHERE id = ?")
+                .bind(&data.username)
+                .bind(&data.fullname)
+                .bind(&hashed)
+                .bind(data.status.unwrap_or_else(|| "Active".to_string()))
+                .bind(data.id)
+                .execute(&state.db)
+                .await
+                .map_err(actix_web::error::ErrorInternalServerError)?;
+        } else {
+            sqlx::query("UPDATE tbl_owners SET username = ?, fullname = ?, status = ? WHERE id = ?")
+                .bind(&data.username)
+                .bind(&data.fullname)
+                .bind(data.status.unwrap_or_else(|| "Active".to_string()))
+                .bind(data.id)
+                .execute(&state.db)
+                .await
+                .map_err(actix_web::error::ErrorInternalServerError)?;
+        }
+
+        return Ok(HttpResponse::Ok().json(json!({"id": data.id, "username": data.username})))
+    }
+
+    // admin/operator path: allow full update including owner_type/main_owner_id
     if let Some(pw) = data.password {
         let hashed = hash(&pw, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?;
-        sqlx::query("UPDATE tbl_users SET username = ?, fullname = ?, password = ?, status = ? WHERE id = ? AND user_type = 'Owner'")
+        sqlx::query("UPDATE tbl_owners SET username = ?, fullname = ?, password = ?, status = ?, owner_type = ?, main_owner_id = ? WHERE id = ?")
             .bind(&data.username)
             .bind(&data.fullname)
             .bind(&hashed)
             .bind(data.status.unwrap_or_else(|| "Active".to_string()))
+            .bind(data.owner_type.unwrap_or_else(|| "main_owner".to_string()))
+            .bind(data.main_owner_id)
             .bind(data.id)
             .execute(&state.db)
             .await
             .map_err(actix_web::error::ErrorInternalServerError)?;
     } else {
-        sqlx::query("UPDATE tbl_users SET username = ?, fullname = ?, status = ? WHERE id = ? AND user_type = 'Owner'")
+        sqlx::query("UPDATE tbl_owners SET username = ?, fullname = ?, status = ?, owner_type = ?, main_owner_id = ? WHERE id = ?")
             .bind(&data.username)
             .bind(&data.fullname)
             .bind(data.status.unwrap_or_else(|| "Active".to_string()))
+            .bind(data.owner_type.unwrap_or_else(|| "main_owner".to_string()))
+            .bind(data.main_owner_id)
             .bind(data.id)
             .execute(&state.db)
             .await
@@ -1337,7 +1499,7 @@ async fn admin_delete_owner(
     let owner_id = path.into_inner().0;
 
     // check exists
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tbl_users WHERE id = ? AND user_type = 'Owner'")
+    let exists: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tbl_owners WHERE id = ?")
         .bind(owner_id)
         .fetch_one(&state.db)
         .await
@@ -1352,7 +1514,7 @@ async fn admin_delete_owner(
         .execute(&state.db)
         .await;
 
-    sqlx::query("DELETE FROM tbl_users WHERE id = ? AND user_type = 'Owner'")
+    sqlx::query("DELETE FROM tbl_owners WHERE id = ?")
         .bind(owner_id)
         .execute(&state.db)
         .await
@@ -1675,11 +1837,11 @@ async fn admin_compute_owner_income(
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
         // compute revenue based on plan billing mode
-        let mut revenue = 0.0_f64;
+        let revenue: f64;
         if let Some(pr) = plan_row {
             let billing_mode: Option<String> = pr.try_get("billing_mode").ok();
             let price_per_unit: Option<BigDecimal> = pr.try_get("price_per_unit").ok();
-            let billing_unit: Option<String> = pr.try_get("billing_unit").ok();
+            let _billing_unit: Option<String> = pr.try_get("billing_unit").ok();
 
             if let Some(ppu) = price_per_unit {
                 let ppu_f = ppu.to_string().parse::<f64>().unwrap_or(0.0);
@@ -1815,8 +1977,8 @@ async fn admin_list_operators(
 ) -> actix_web::Result<HttpResponse> {
     let _admin = extract_admin_claims(&req, &state.jwt_secret)?;
 
-    let rows = sqlx::query_as::<_, OwnerPublic>(
-        "SELECT id, username, fullname, status FROM tbl_users WHERE user_type = 'Operator' ORDER BY id ASC",
+    let rows = sqlx::query_as::<_, AdminPublic>(
+        "SELECT id, username, fullname, user_type as user_type FROM tbl_users WHERE user_type = 'Operator' ORDER BY id ASC",
     )
     .fetch_all(&state.db)
     .await
@@ -1969,4 +2131,65 @@ async fn admin_create_user(
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
     Ok(HttpResponse::Created().json(json!({"username": data.username, "user_type": data.user_type})))
+}
+
+// Public: list active internet plans
+async fn public_list_internet_plans(
+    state: web::Data<AppState>,
+) -> actix_web::Result<HttpResponse> {
+    let rows = sqlx::query_as::<_, InternetPlan>(
+        "SELECT id, name, category, price, currency, validity_unit, validity_value, download_mbps, upload_mbps, radius_groupname, status FROM tbl_internet_plans WHERE status = 'Active' ORDER BY id ASC"
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    Ok(HttpResponse::Ok().json(rows))
+}
+
+// GET /api/customer/activity
+async fn customer_activity(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let claims = extract_claims(&req, &state.jwt_secret)?;
+    let customer_id = claims.sub;
+
+    // collect recent owner topups
+    let topups = sqlx::query(
+        "SELECT id, owner_id, amount, note, created_at FROM owner_wallet_transactions WHERE customer_id = ? ORDER BY created_at DESC LIMIT 20",
+    )
+    .bind(customer_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    // collect recent purchases
+    let purchases = sqlx::query(
+        "SELECT id, invoice, plan_name, price, recharged_on FROM tbl_transactions WHERE user_id = ? ORDER BY recharged_on DESC LIMIT 20",
+    )
+    .bind(customer_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    let mut items = Vec::new();
+    for row in topups {
+        let id: i64 = row.try_get("id").ok().and_then(|v| v).unwrap_or_default();
+        let owner_id: i32 = row.try_get("owner_id").ok().and_then(|v| v).unwrap_or_default();
+        let amount: String = row.try_get("amount").ok().and_then(|v| v).unwrap_or_default();
+        let note: Option<String> = row.try_get("note").ok().and_then(|v| v);
+        let created_at: String = row.try_get("created_at").ok().and_then(|v| v).unwrap_or_default();
+        items.push(json!({"type": "topup", "id": id, "owner_id": owner_id, "amount": amount.to_string(), "note": note.unwrap_or_default(), "time": created_at}));
+    }
+    for row in purchases {
+        let id: i64 = row.try_get("id").ok().and_then(|v| v).unwrap_or_default();
+        let invoice: Option<String> = row.try_get("invoice").ok().and_then(|v| v);
+        let plan_name: Option<String> = row.try_get("plan_name").ok().and_then(|v| v);
+        let price: Option<String> = row.try_get("price").ok().and_then(|v| v);
+        let recharged_on: Option<String> = row.try_get("recharged_on").ok().and_then(|v| v);
+        items.push(json!({"type": "purchase", "id": id, "invoice": invoice.unwrap_or_default(), "plan_name": plan_name.unwrap_or_default(), "price": price.unwrap_or_default(), "time": recharged_on.unwrap_or_default()}));
+    }
+
+    Ok(HttpResponse::Ok().json(items))
 }

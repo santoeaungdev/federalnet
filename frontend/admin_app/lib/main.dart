@@ -15,13 +15,13 @@ import 'login_page.dart';
 void main() => runApp(const AdminApp());
 
 class AdminApp extends StatelessWidget {
-  const AdminApp();
+  const AdminApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       title: 'FederalNet Admin',
-      home: const LoginPage(role: 'admin'),
+      home: LoginPage(role: 'admin'),
     );
   }
 }

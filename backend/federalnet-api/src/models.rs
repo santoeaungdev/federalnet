@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use bigdecimal::BigDecimal;
@@ -73,7 +75,7 @@ pub struct AdminLoginResponse {
     pub admin: AdminPublic,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+#[derive(sqlx::FromRow, Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct AdminPublic {
     pub id: u32,
     pub username: String,
@@ -133,16 +135,65 @@ pub struct CustomerRegisterRequest {
 pub struct CustomerUpdateRequest {
     pub id: i32,
     pub username: String,
-    pub password: String,
+    pub password: Option<String>,
     pub fullname: String,
     pub nrc_no: String,
     pub phonenumber: String,
     pub email: String,
     pub service_type: String,
     pub pppoe_username: String,
-    pub pppoe_password: String,
+    pub pppoe_password: Option<String>,
     pub router_tag: String,
     pub internet_plan_id: Option<i32>,  // optional: ID of internet plan to assign
+    pub owner_type: Option<String>,
+    pub main_owner_id: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CustomerUpdateRequest;
+    use serde_json::json;
+
+    #[test]
+    fn customer_update_deser_missing_and_empty() {
+        // missing password fields -> deserializes to None
+        let v = json!({
+            "id": 1,
+            "username": "alice",
+            "fullname": "Alice",
+            "nrc_no": "1/Some( N )000001",
+            "phonenumber": "09xxxx",
+            "email": "a@b.c",
+            "service_type": "PPPoE",
+            "pppoe_username": "alice_ppp",
+            "router_tag": "",
+            "internet_plan_id": null
+        });
+        let req: CustomerUpdateRequest = serde_json::from_value(v).expect("deserialize");
+        assert!(req.password.is_none());
+        assert!(req.pppoe_password.is_none());
+
+        // explicit empty string -> Some("")
+        let v2 = json!({
+            "id": 2,
+            "username": "bob",
+            "password": "",
+            "fullname": "Bob",
+            "nrc_no": "1/Some( N )000002",
+            "phonenumber": "09yyyy",
+            "email": "b@c.d",
+            "service_type": "PPPoE",
+            "pppoe_username": "bob_ppp",
+            "pppoe_password": "",
+            "router_tag": "",
+            "internet_plan_id": null
+        });
+        let req2: CustomerUpdateRequest = serde_json::from_value(v2).expect("deserialize");
+        assert!(req2.password.is_some());
+        assert_eq!(req2.password.unwrap(), "");
+        assert!(req2.pppoe_password.is_some());
+        assert_eq!(req2.pppoe_password.unwrap(), "");
+    }
 }
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
@@ -222,6 +273,8 @@ pub struct OwnerPublic {
     pub username: String,
     pub fullname: String,
     pub status: String,
+    pub owner_type: String,
+    pub main_owner_id: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -229,6 +282,8 @@ pub struct OwnerCreateRequest {
     pub username: String,
     pub password: String,
     pub fullname: String,
+    pub owner_type: Option<String>,
+    pub main_owner_id: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -246,6 +301,8 @@ pub struct OwnerUpdateRequest {
     pub password: Option<String>,
     pub fullname: String,
     pub status: Option<String>,
+    pub owner_type: Option<String>,
+    pub main_owner_id: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
