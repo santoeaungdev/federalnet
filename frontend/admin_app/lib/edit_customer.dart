@@ -391,7 +391,12 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                 controller: _password,
                 decoration: const InputDecoration(labelText: 'Password'),
                 obscureText: true,
-                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                validator: (v) {
+                  // On edit, password is optional. Only validate when the user
+                  // actually enters a new password.
+                  if (v == null || v.isEmpty) return null;
+                  return null;
+                },
               ),
               TextFormField(
                 controller: _confirmPassword,
@@ -399,6 +404,8 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
                     const InputDecoration(labelText: 'Confirm Password'),
                 obscureText: true,
                 validator: (v) {
+                  // Only require confirmation when a new password is entered.
+                  if (_password.text.trim().isEmpty) return null;
                   if (v == null || v.isEmpty) return 'Required';
                   if (v != _password.text) return 'Passwords do not match';
                   return null;

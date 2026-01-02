@@ -1,0 +1,52 @@
+name: Build Debug APK
+
+on:
+  push:
+    branches: [ main, development ]
+  workflow_dispatch:
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+
+      - name: Setup Java (for Android SDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK tools
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 33
+          build-tools: '33.0.2'
+
+      - name: Accept Android licenses
+        run: |
+          yes | sdkmanager --licenses || true
+
+      - name: Install Android platforms
+        run: |
+          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
+      - name: Flutter pub get
+        working-directory: frontend/admin_app
+        run: flutter pub get
+
+      - name: Build debug APK
+        working-directory: frontend/admin_app
+        run: flutter build apk --debug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin_app-debug-apk
+          path: frontend/admin_app/build/app/outputs/flutter-apk/app-debug.apk
