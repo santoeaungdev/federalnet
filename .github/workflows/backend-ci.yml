@@ -1,0 +1,103 @@
+name: Backend CI - Build, Seed, Test
+
+on:
+  push:
+    branches: [ development, main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=5s
+          --health-timeout=2s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install MySQL client
+        run: sudo apt-get update && sudo apt-get install -y default-mysql-client
+
+      - name: Wait for MySQL
+        run: |
+          for i in {1..30}; do
+            mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot && break || sleep 2
+          done
+
+      - name: Create database and import schema
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -e "CREATE DATABASE IF NOT EXISTS federalnet;"
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot federalnet < docker/schema.sql
+
+      - name: Build backend (release)
+        working-directory: backend/federalnet-api
+        run: |
+          cargo build --release | tee ../build_backend.log
+
+      - name: Run backend in background
+        working-directory: backend/federalnet-api
+        env:
+          DATABASE_URL: "mysql://root:root@127.0.0.1:3306/federalnet"
+          JWT_SECRET: "ci-test-secret"
+          ENABLE_SEED_ENDPOINTS: "true"
+          RUST_LOG: "info"
+        run: |
+          ./target/release/federalnet-api &> ../server.log &
+          # wait for server to become available
+          for i in {1..30}; do
+            curl -sS http://127.0.0.1:8080/api/health && break || sleep 2
+          done
+
+      - name: Seed test data and run CRUD tests
+        working-directory: backend/federalnet-api
+        env:
+          API_URL: http://127.0.0.1:8080/api
+        run: |
+          set -eux
+          echo "=== Seed test data ===" | tee -a ../test_results.txt
+          curl -sS -X POST "$API_URL/_seed_test_data" | tee -a ../test_results.txt
+
+          echo "\n=== Admin login ===" | tee -a ../test_results.txt
+          TOKEN=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"username":"testadmin","password":"adminpass"}' "$API_URL/admin/login" | jq -r '.token')
+          echo "Token: $TOKEN" | tee -a ../test_results.txt
+
+          echo "\n=== Create owner (POST /admin/owners) ===" | tee -a ../test_results.txt
+          curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"username":"ci_owner","password":"ownpass","fullname":"CI Owner"}' "$API_URL/admin/owners" | tee -a ../test_results.txt
+
+          echo "\n=== List owners ===" | tee -a ../test_results.txt
+          curl -sS -H "Authorization: Bearer $TOKEN" "$API_URL/admin/owners" | tee -a ../test_results.txt
+
+          echo "\n=== Update owner (first owner id) ===" | tee -a ../test_results.txt
+          OWNER_ID=$(curl -sS -H "Authorization: Bearer $TOKEN" "$API_URL/admin/owners" | jq '.[0].id')
+          curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "{\"id\":$OWNER_ID,\"username\":\"ci_owner_updated\",\"fullname\":\"CI Owner Updated\"}" "$API_URL/admin/owners/$OWNER_ID" | tee -a ../test_results.txt
+
+          echo "\n=== Delete owner ===" | tee -a ../test_results.txt
+          curl -sS -X DELETE -H "Authorization: Bearer $TOKEN" "$API_URL/admin/owners/$OWNER_ID" | tee -a ../test_results.txt
+
+          echo "\n=== Update customer (seeded testuser2) ===" | tee -a ../test_results.txt
+          # fetch customer id (admin list endpoint previously used)
+          CUST_ID=$(curl -sS -H "Authorization: Bearer $TOKEN" "$API_URL/customers" | jq '.[0].id') || CUST_ID=1
+          curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "{\"id\":$CUST_ID,\"username\":\"testuser2\",\"fullname\":\"Updated Customer\",\"nrc_no\":\"1/Some(N)000001\",\"phonenumber\":\"09\",\"email\":\"c@test.local\",\"service_type\":\"PPPoE\",\"pppoe_username\":\"testuser2\",\"router_tag\":\"\",\"internet_plan_id\":null}" "$API_URL/admin/customer/update" | tee -a ../test_results.txt
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: backend/test_results.txt
