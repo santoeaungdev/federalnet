@@ -927,8 +927,8 @@ async fn admin_get_customer(
 
     let row = sqlx::query_as::<_, AdminCustomerDetail>(
         r#"
-        SELECT c.id, c.username, c.fullname, c.nrc_no, c.phonenumber, c.email,
-               c.service_type, c.pppoe_username, c.pppoe_password, c.status,
+         SELECT c.id, c.username, c.fullname, c.nrc_no, c.phonenumber, c.email,
+             c.service_type, c.pppoe_username, c.pppoe_password, c.password, c.status,
                (SELECT groupname FROM radusergroup rug WHERE rug.username = c.pppoe_username ORDER BY priority ASC LIMIT 1) AS groupname,
                NULL as internet_plan_id
         FROM tbl_customers c
@@ -1015,7 +1015,7 @@ async fn admin_customer_update(
     let current = sqlx::query_as::<_, AdminCustomerDetail>(
         r#"
         SELECT c.id, c.username, c.fullname, c.nrc_no, c.phonenumber, c.email,
-               c.service_type, c.pppoe_username, c.pppoe_password, c.status,
+               c.service_type, c.pppoe_username, c.pppoe_password, c.password, c.status,
                (SELECT groupname FROM radusergroup rug WHERE rug.username = c.pppoe_username ORDER BY priority ASC LIMIT 1) AS groupname
         FROM tbl_customers c
         WHERE c.id = ? LIMIT 1
@@ -1070,7 +1070,8 @@ async fn admin_customer_update(
         Some(p) if !p.trim().is_empty() => {
             hash(&p, DEFAULT_COST).map_err(actix_web::error::ErrorInternalServerError)?
         }
-        _ => current.pppoe_password.clone(),
+        // Preserve existing hashed password when no new password provided
+        _ => current.password.clone(),
     };
 
     sqlx::query(

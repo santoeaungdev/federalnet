@@ -215,6 +215,8 @@ pub struct AdminCustomerDetail {
     pub service_type: String,
     pub pppoe_username: String,
     pub pppoe_password: String,
+    // Stored hashed password from tbl_customers.password
+    pub password: String,
     pub status: String,
     pub groupname: Option<String>,
     #[serde(skip)]
