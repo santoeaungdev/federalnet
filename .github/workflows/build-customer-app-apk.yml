@@ -45,7 +45,7 @@ jobs:
         with:
           path: |
             ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('frontend/customer_app/pubspec.yaml') }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('frontend/customer_app/pubspec.yaml', 'frontend/customer_app/pubspec.lock') }}
           restore-keys: |
             ${{ runner.os }}-pub-
 
