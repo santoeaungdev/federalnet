@@ -3,10 +3,14 @@ name: Build admin_app debug APK
 on:
   workflow_dispatch:
   push:
+    branches:
+      - development
     paths:
       - 'frontend/admin_app/**'
       - '.github/workflows/build-admin-app-apk.yml'
   pull_request:
+    branches:
+      - development
     paths:
       - 'frontend/admin_app/**'
       - '.github/workflows/build-admin-app-apk.yml'
