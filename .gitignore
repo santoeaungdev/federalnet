@@ -11,11 +11,18 @@ pubspec.lock
 # Node / general
 node_modules/
 .env
+.env.local
+.env.production
 .DS_Store
 .vscode/
 .idea/
 *.iml
 *.log
+
+# Deployment artifacts
+deployment/nginx/ssl/*.pem
+deployment/nginx/ssl/*.key
+deployment/nginx/ssl/*.crt
 
 # OS
 Thumbs.db
